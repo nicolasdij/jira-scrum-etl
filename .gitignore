@@ -1,0 +1,32 @@
+# Environment
+.env
+*.env
+
+# DuckDB data files
+data/*.duckdb
+data/*.duckdb.wal
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+
+# dbt
+dbt_project/target/
+dbt_project/logs/
+dbt_project/.user.yml
+
+# Dagster
+.dagster/
+storage/
+
+# Google credentials
+*.json
+!dbt_project/profiles.yml
+
+# IDE
+.vscode/
+.idea/

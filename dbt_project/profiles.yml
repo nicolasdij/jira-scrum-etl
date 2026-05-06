@@ -1,0 +1,9 @@
+jira_scrum:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', '../data/scrum.duckdb') }}"
+      threads: 4
+      extensions:
+        - httpfs

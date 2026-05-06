@@ -1,0 +1,41 @@
+name: jira_scrum
+version: "1.0.0"
+config-version: 2
+
+profile: jira_scrum
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # Rolling window size for velocity average (override via --vars or env)
+  rolling_window_size: 5
+
+seeds:
+  jira_scrum:
+    +schema: raw
+    team_members:
+      +column_types:
+        primary: boolean
+    subteam_labels:
+      +column_types: {}
+    member_regions:
+      +column_types: {}
+    board_config:
+      +column_types:
+        board_id: integer
+
+models:
+  jira_scrum:
+    staging:
+      +materialized: view
+      +schema: staging
+    intermediate:
+      +materialized: table
+      +schema: intermediate
+    marts:
+      +materialized: table
+      +schema: marts

@@ -1,0 +1,10 @@
+label,board,subteam
+delivery-customer-env,DELI,DevOps
+delivery-internal-devops,DELI,DevOps
+delivery-customer-adapter,DELI,Backend
+delivery-customer-report,DELI,Backend
+delivery-internal-adapter,DELI,Backend
+delivery-sol-arch,DELI,SolArch
+delivery-eb-content,DELI,SolArch
+delivery-customer-asset,DELI,SolArch
+delivery-customer-analytics,DELI,SolArch

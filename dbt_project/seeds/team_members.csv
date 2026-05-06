@@ -1,0 +1,10 @@
+member_name,board,subteam,primary
+Pablo Alvarez,DELI,DevOps,true
+Pablo Alvarez,NFR,Infra,false
+Kike Alvarez,DELI,DevOps,true
+Kike Alvarez,DELI,Backend,false
+Ever Arce,DELI,DevOps,true
+Ever Arce,DELI,Backend,false
+Antonio Estarli,DELI,SolArch,true
+Mario Briceno,DELI,SolArch,true
+Mark Neary,NFR,Infra,true
