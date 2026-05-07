@@ -1,0 +1,9 @@
+[32m2026-05-06 20:31:54 +0200[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 3f06c32d-4d05-4a2f-b9d0-f55ed38c345e - 57322 - LOGS_CAPTURED - Capturing logs for process (pid: 57322).
+[32m2026-05-06 20:31:54 +0200[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 3f06c32d-4d05-4a2f-b9d0-f55ed38c345e - 57322 - raw_jira_sprints - STEP_START - Started execution of step "raw_jira_sprints".
+[32m2026-05-06 20:31:54 +0200[0m - dagster - [34mINFO[0m - __ASSET_JOB - 3f06c32d-4d05-4a2f-b9d0-f55ed38c345e - raw_jira_sprints - Fetching sprints for board 74
+[32m2026-05-06 20:31:56 +0200[0m - dagster - [34mINFO[0m - __ASSET_JOB - 3f06c32d-4d05-4a2f-b9d0-f55ed38c345e - raw_jira_sprints - Fetching sprints for board 212
+[32m2026-05-06 20:31:58 +0200[0m - dagster - [34mINFO[0m - __ASSET_JOB - 3f06c32d-4d05-4a2f-b9d0-f55ed38c345e - raw_jira_sprints - Total sprints fetched: 202
+[32m2026-05-06 20:31:58 +0200[0m - dagster - [34mINFO[0m - __ASSET_JOB - 3f06c32d-4d05-4a2f-b9d0-f55ed38c345e - raw_jira_sprints - Loaded 202 sprint rows into raw.raw_jira_sprints
+[32m2026-05-06 20:31:58 +0200[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 3f06c32d-4d05-4a2f-b9d0-f55ed38c345e - 57322 - raw_jira_sprints - STEP_OUTPUT - Yielded output "result" of type "Nothing". (Type check passed).
+[32m2026-05-06 20:31:59 +0200[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 3f06c32d-4d05-4a2f-b9d0-f55ed38c345e - 57322 - raw_jira_sprints - ASSET_MATERIALIZATION - Materialized value raw_jira_sprints.
+[32m2026-05-06 20:31:59 +0200[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 3f06c32d-4d05-4a2f-b9d0-f55ed38c345e - 57322 - raw_jira_sprints - STEP_SUCCESS - Finished execution of step "raw_jira_sprints" in 4.65s.

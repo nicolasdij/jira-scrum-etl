@@ -10,7 +10,7 @@ from typing import Any, Generator
 
 import requests
 from dagster import ConfigurableResource, get_dagster_logger
-from pydantic import Field, SecretStr
+from pydantic import Field
 
 
 class JiraResource(ConfigurableResource):
@@ -24,7 +24,9 @@ class JiraResource(ConfigurableResource):
 
     base_url: str = Field(description="Atlassian Cloud base URL, e.g. https://org.atlassian.net")
     email: str = Field(description="Atlassian account email")
-    api_token: SecretStr = Field(description="Jira API token")
+    # Plain str — Dagster's ConfigurableResource does not support pydantic.SecretStr.
+    # The value is sourced from an env var and never logged.
+    api_token: str = Field(description="Jira API token")
     max_results_per_page: int = Field(default=100, description="Page size for paginated requests")
     retry_attempts: int = Field(default=3, description="Number of retries on 429/5xx responses")
     retry_backoff_seconds: float = Field(default=2.0, description="Base backoff between retries")
@@ -35,7 +37,7 @@ class JiraResource(ConfigurableResource):
 
     def _session(self) -> requests.Session:
         session = requests.Session()
-        session.auth = (self.email, self.api_token.get_secret_value())
+        session.auth = (self.email, self.api_token)
         session.headers.update({"Accept": "application/json"})
         return session
 

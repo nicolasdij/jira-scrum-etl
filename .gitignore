@@ -2,6 +2,9 @@
 .env
 *.env
 
+# Secrets
+secrets/
+
 # DuckDB data files
 data/*.duckdb
 data/*.duckdb.wal
@@ -19,9 +22,14 @@ dbt_project/target/
 dbt_project/logs/
 dbt_project/.user.yml
 
-# Dagster
+# Dagster runtime files (SQLite DBs, logs, intermediate storage).
+# dagster.yaml is tracked; everything Dagster writes at runtime is not.
 .dagster/
-storage/
+dagster_home/logs/
+dagster_home/storage/
+dagster_home/history/
+dagster_home/*.db
+dagster_home/schedules/
 
 # Google credentials
 *.json

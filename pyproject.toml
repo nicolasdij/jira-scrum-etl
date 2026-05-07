@@ -5,31 +5,28 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "jira-scrum-etl"
 version = "0.1.0"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     # Dagster core
     "dagster>=1.7",
     "dagster-webserver>=1.7",
     "dagster-dbt>=0.23",
-
     # dbt with DuckDB adapter
     "dbt-core>=1.8",
     "dbt-duckdb>=1.8",
-
     # DuckDB
     "duckdb>=0.10",
-
     # Jira client
     "requests>=2.31",
-
     # Google Sheets
     "gspread>=6.0",
     "google-auth>=2.28",
-
     # Utilities
     "python-dotenv>=1.0",
     "pydantic>=2.6",
     "pendulum>=3.0",
+    "dagster-cli>=0.8.1",
+    "dagster-dg-cli>=1.13.3",
 ]
 
 [project.optional-dependencies]
@@ -42,6 +39,12 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["dagster_pipeline*"]
+
+[tool.dg]
+directory_type = "project"
+
+[tool.dg.project]
+root_module = "dagster_pipeline"
 
 [tool.dagster]
 module_name = "dagster_pipeline.definitions"

@@ -1,0 +1,31 @@
+# Dagster instance configuration.
+# DAGSTER_HOME must point to the directory containing this file so that
+# Dagster knows where to persist state between server restarts.
+#
+# Set in .env:
+#   DAGSTER_HOME=/absolute/path/to/jira-scrum-etl/dagster_home
+# Or export before running:
+#   export DAGSTER_HOME=$(pwd)/dagster_home && dg dev
+
+# ── Persistent storage (SQLite) ───────────────────────────────────────────────
+# Stores run history, event logs, and schedule/sensor tick state in SQLite
+# databases inside DAGSTER_HOME. All data survives server restarts.
+storage:
+  sqlite:
+    base_dir: "."   # relative to DAGSTER_HOME
+
+# ── Compute logs ──────────────────────────────────────────────────────────────
+# Persists stdout/stderr from each run step so you can review them after restart.
+compute_logs:
+  module: dagster.core.storage.local_compute_log_manager
+  class: LocalComputeLogManager
+  config:
+    base_dir: "./logs"
+
+# ── Local artifact storage ────────────────────────────────────────────────────
+# Used by Dagster internals for intermediate values when needed.
+local_artifact_storage:
+  module: dagster.core.storage.root
+  class: LocalArtifactStorage
+  config:
+    base_dir: "./storage"

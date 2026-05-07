@@ -11,7 +11,7 @@ import os
 from typing import Any
 
 import duckdb
-from dagster import AssetExecutionContext, asset
+from dagster import AssetKey, asset
 
 from dagster_pipeline.resources.gsheets_resource import GSheetsResource
 
@@ -32,14 +32,13 @@ def _query_to_rows(db_path: str, query: str) -> list[list[Any]]:
 @asset(
     name="gsheets_capacity_plan_export",
     group_name="exports",
-    deps=["raw_jira_sprints", "raw_jira_issues", "raw_time_off",
-          "raw_public_holidays", "raw_team_splits"],
+    deps=[AssetKey("mart_capacity_planning")],
     description=(
         "Writes mart_capacity_planning to the 'Capacity Plan' tab in the output spreadsheet."
     ),
 )
 def gsheets_capacity_plan_export(
-    context: AssetExecutionContext,
+    context,
     gsheets: GSheetsResource,
 ) -> None:
     db_path = os.environ.get("DUCKDB_PATH", "data/scrum.duckdb")
@@ -70,14 +69,13 @@ def gsheets_capacity_plan_export(
 @asset(
     name="gsheets_sprint_history_export",
     group_name="exports",
-    deps=["raw_jira_sprints", "raw_jira_issues", "raw_time_off",
-          "raw_public_holidays", "raw_team_splits"],
+    deps=[AssetKey("mart_sprint_history")],
     description=(
         "Writes mart_sprint_history to the 'Sprint History' tab in the output spreadsheet."
     ),
 )
 def gsheets_sprint_history_export(
-    context: AssetExecutionContext,
+    context,
     gsheets: GSheetsResource,
 ) -> None:
     db_path = os.environ.get("DUCKDB_PATH", "data/scrum.duckdb")

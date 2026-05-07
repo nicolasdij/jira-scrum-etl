@@ -7,7 +7,6 @@ from dagster import (
     DefaultScheduleStatus,
     RunRequest,
     ScheduleDefinition,
-    SensorDefinition,
     SkipReason,
     define_asset_job,
     sensor,
@@ -17,16 +16,14 @@ from dagster import (
 # Jobs
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Full pipeline: extract → dbt (run externally via dagster-dbt) → export
+# Full pipeline: extract → dbt transform → export.
+# AssetSelection.all() ensures dbt assets (staging/intermediate/marts) are
+# included and Dagster respects the full dependency graph when ordering execution.
 full_pipeline_job = define_asset_job(
     name="full_pipeline_job",
-    selection=AssetSelection.groups(
-        "raw_jira",
-        "raw_gsheets",
-        "exports",
-    ),
+    selection=AssetSelection.all(),
     description=(
-        "Full ETL run: extract from Jira and Google Sheets, trigger dbt, "
+        "Full ETL run: extract from Jira and Google Sheets, run dbt transforms, "
         "write results back to Google Sheets."
     ),
 )

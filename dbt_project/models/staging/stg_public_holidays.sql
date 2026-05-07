@@ -23,7 +23,7 @@ exploded AS (
 working_days_only AS (
     SELECT *
     FROM exploded
-    WHERE DAYOFWEEK(holiday_date) NOT IN (1, 7)   -- exclude Sat/Sun
+    WHERE DAYOFWEEK(holiday_date) NOT IN (0, 6)   -- DuckDB: 0=Sunday, 6=Saturday
 )
 
 SELECT * FROM working_days_only

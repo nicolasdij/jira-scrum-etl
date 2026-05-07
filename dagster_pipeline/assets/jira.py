@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any
 
 import duckdb
-from dagster import AssetExecutionContext, asset
+from dagster import asset
 
 from dagster_pipeline.resources.jira_resource import JiraResource
 
@@ -77,7 +77,7 @@ def _resolve_sprint_from_field(field_value: Any) -> dict[str, str | None]:
     group_name="raw_jira",
     description="All sprints for DELI (board 74) and NFR (board 212) boards.",
 )
-def raw_jira_sprints(context: AssetExecutionContext, jira: JiraResource) -> None:
+def raw_jira_sprints(context, jira: JiraResource) -> None:
     import os
     db_path = os.environ.get("DUCKDB_PATH", "data/scrum.duckdb")
 
@@ -137,7 +137,7 @@ def raw_jira_sprints(context: AssetExecutionContext, jira: JiraResource) -> None
     deps=["raw_jira_sprints"],
     description="All issues for all sprints, including story points, status, labels, and sprint ref.",
 )
-def raw_jira_issues(context: AssetExecutionContext, jira: JiraResource) -> None:
+def raw_jira_issues(context, jira: JiraResource) -> None:
     import os
     db_path = os.environ.get("DUCKDB_PATH", "data/scrum.duckdb")
 

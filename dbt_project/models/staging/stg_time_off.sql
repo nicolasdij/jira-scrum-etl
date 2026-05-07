@@ -28,7 +28,7 @@ days AS (
 working_days AS (
     SELECT *
     FROM days
-    WHERE DAYOFWEEK(off_date) NOT IN (1, 7)   -- 1=Sunday, 7=Saturday in DuckDB
+    WHERE DAYOFWEEK(off_date) NOT IN (0, 6)   -- DuckDB: 0=Sunday, 6=Saturday
 ),
 
 -- Join to sprints to know which sprint each off-day falls in

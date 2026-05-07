@@ -51,7 +51,7 @@ try:
     )
     dbt_project.prepare_if_dev()
 
-    @dbt_assets(manifest=dbt_project.manifest_path, dagster_dbt_translator=None)
+    @dbt_assets(manifest=dbt_project.manifest_path)
     def dbt_pipeline_assets(context, dbt: DbtCliResource):
         yield from dbt.cli(["build"], context=context).stream()
 

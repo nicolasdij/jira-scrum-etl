@@ -15,10 +15,9 @@ import os
 from datetime import datetime
 
 import duckdb
-from dagster import AssetExecutionContext, asset
+from dagster import asset
 
 from dagster_pipeline.resources.gsheets_resource import GSheetsResource
-from dagster_pipeline.resources.jira_resource import JiraResource
 
 # Google Sheets tab names (in the input spreadsheet)
 SHEET_TIME_OFF = "Time Off"
@@ -46,7 +45,7 @@ def _db(db_path: str | None = None) -> duckdb.DuckDBPyConnection:
     group_name="raw_gsheets",
     description="Time-off periods per team member read from Google Sheets.",
 )
-def raw_time_off(context: AssetExecutionContext, gsheets: GSheetsResource) -> None:
+def raw_time_off(context, gsheets: GSheetsResource) -> None:
     records = gsheets.read_input_sheet(SHEET_TIME_OFF)
     context.log.info(f"Read {len(records)} time-off records")
 
@@ -84,7 +83,7 @@ def raw_time_off(context: AssetExecutionContext, gsheets: GSheetsResource) -> No
     group_name="raw_gsheets",
     description="Public holidays per region (comma-separated) from Google Sheets.",
 )
-def raw_public_holidays(context: AssetExecutionContext, gsheets: GSheetsResource) -> None:
+def raw_public_holidays(context, gsheets: GSheetsResource) -> None:
     records = gsheets.read_input_sheet(SHEET_HOLIDAYS)
     context.log.info(f"Read {len(records)} holiday records")
 
@@ -118,7 +117,7 @@ def raw_public_holidays(context: AssetExecutionContext, gsheets: GSheetsResource
     group_name="raw_gsheets",
     description="Per-sprint, per-member board/sub-team allocation read from Google Sheets.",
 )
-def raw_team_splits(context: AssetExecutionContext, gsheets: GSheetsResource) -> None:
+def raw_team_splits(context, gsheets: GSheetsResource) -> None:
     records = gsheets.read_input_sheet(SHEET_TEAM_SPLITS)
     context.log.info(f"Read {len(records)} team-split records")
 
@@ -169,9 +168,8 @@ def raw_team_splits(context: AssetExecutionContext, gsheets: GSheetsResource) ->
     ),
 )
 def gsheets_team_splits_prepopulator(
-    context: AssetExecutionContext,
+    context,
     gsheets: GSheetsResource,
-    jira: JiraResource,
 ) -> None:
     db_path = os.environ.get("DUCKDB_PATH", "data/scrum.duckdb")
     con = duckdb.connect(db_path)
