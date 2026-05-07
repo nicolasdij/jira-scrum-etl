@@ -1,0 +1,17 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: raw
+    description: "Raw tables written by Dagster Python extraction assets."
+    tables:
+      - name: raw_jira_sprints
+        description: "All sprints for DELI and NFR boards, extracted from the Jira Agile API."
+      - name: raw_jira_issues
+        description: "All issues for each sprint partition, extracted from the Jira Agile API."
+      - name: raw_time_off
+        description: "Time-off periods per team member, read from the Google Sheets input spreadsheet."
+      - name: raw_public_holidays
+        description: "Public holidays per region, read from the Google Sheets input spreadsheet."
+      - name: raw_team_splits
+        description: "Per-sprint, per-member board/sub-team allocation, read from the Google Sheets input spreadsheet."

@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 import duckdb
-from dagster import asset
+from dagster import AssetKey, asset
 
 from dagster_pipeline.resources.gsheets_resource import GSheetsResource
 
@@ -92,6 +92,7 @@ def _db(db_path: str | None = None) -> duckdb.DuckDBPyConnection:
 
 @asset(
     name="raw_time_off",
+    key_prefix=["raw"],
     group_name="raw_gsheets",
     description="Time-off periods per team member read from Google Sheets.",
 )
@@ -130,6 +131,7 @@ def raw_time_off(context, gsheets: GSheetsResource) -> None:
 
 @asset(
     name="raw_public_holidays",
+    key_prefix=["raw"],
     group_name="raw_gsheets",
     description="Public holidays per region (comma-separated) from Google Sheets.",
 )
@@ -164,7 +166,9 @@ def raw_public_holidays(context, gsheets: GSheetsResource) -> None:
 
 @asset(
     name="raw_team_splits",
+    key_prefix=["raw"],
     group_name="raw_gsheets",
+    deps=["gsheets_team_splits_prepopulator"],
     description="Per-sprint, per-member board/sub-team allocation read from Google Sheets.",
 )
 def raw_team_splits(context, gsheets: GSheetsResource) -> None:
@@ -210,7 +214,11 @@ def raw_team_splits(context, gsheets: GSheetsResource) -> None:
 @asset(
     name="gsheets_team_splits_prepopulator",
     group_name="raw_gsheets",
-    deps=["raw_jira_sprints", "raw_time_off", "raw_public_holidays"],
+    deps=[
+        AssetKey(["raw", "raw_jira_sprints"]),
+        AssetKey(["raw", "raw_time_off"]),
+        AssetKey(["raw", "raw_public_holidays"]),
+    ],
     description=(
         "Inserts skeleton rows into the Team Splits sheet for any (sprint, member, board) "
         "combination that is missing — only for sprints with state='future'. "

@@ -9,7 +9,7 @@ WITH source AS (
         board,
         subteam,
         days_allocated::DOUBLE AS days_allocated
-    FROM raw.raw_team_splits
+    FROM {{ source('raw', 'raw_team_splits') }}
     WHERE sprint_name IS NOT NULL
       AND member_name IS NOT NULL
       AND board       IS NOT NULL

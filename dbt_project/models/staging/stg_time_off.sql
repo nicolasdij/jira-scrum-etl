@@ -8,7 +8,7 @@ WITH source AS (
         TRY_CAST(start_date AS DATE) AS start_date,
         TRY_CAST(end_date   AS DATE) AS end_date,
         board
-    FROM raw.raw_time_off
+    FROM {{ source('raw', 'raw_time_off') }}
     WHERE start_date IS NOT NULL
       AND end_date   IS NOT NULL
 ),

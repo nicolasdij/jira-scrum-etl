@@ -29,3 +29,17 @@ local_artifact_storage:
   class: LocalArtifactStorage
   config:
     base_dir: "./storage"
+
+# ── Run coordinator ───────────────────────────────────────────────────────────
+# QueuedRunCoordinator serialises runs that share a concurrency key, preventing
+# simultaneous DuckDB writers from racing for the file lock.
+# raw_jira_issues partitions are tagged dagster/concurrency_key=duckdb, so at
+# most one partition materialisation writes to the DuckDB file at a time.
+run_coordinator:
+  module: dagster._core.run_coordinator
+  class: QueuedRunCoordinator
+  config:
+    tag_concurrency_limits:
+      - key: "dagster/concurrency_key"
+        value: "duckdb"
+        limit: 1

@@ -18,7 +18,7 @@ from dagster import (
 # ─────────────────────────────────────────────────────────────────────────────
 
 # raw_jira_issues is partitioned per-sprint and managed by its own sensor/job below.
-_partitioned_issues = AssetSelection.assets(AssetKey("raw_jira_issues"))
+_partitioned_issues = AssetSelection.assets(AssetKey(["raw", "raw_jira_issues"]))
 
 # Full pipeline: extract → dbt transform → export.
 # raw_jira_issues is excluded because it is a partitioned asset handled separately.

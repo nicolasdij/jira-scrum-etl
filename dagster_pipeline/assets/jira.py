@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any
 
 import duckdb
-from dagster import DynamicPartitionsDefinition, asset
+from dagster import AssetKey, DynamicPartitionsDefinition, asset
 
 sprint_partitions = DynamicPartitionsDefinition(name="sprints")
 
@@ -76,6 +76,7 @@ def _resolve_sprint_from_field(field_value: Any) -> dict[str, str | None]:
 
 @asset(
     name="raw_jira_sprints",
+    key_prefix=["raw"],
     group_name="raw_jira",
     description="All sprints for DELI (board 74) and NFR (board 212) boards.",
 )
@@ -146,9 +147,11 @@ def raw_jira_sprints(context, jira: JiraResource) -> None:
 
 @asset(
     name="raw_jira_issues",
+    key_prefix=["raw"],
     group_name="raw_jira",
     partitions_def=sprint_partitions,
-    deps=["raw_jira_sprints"],
+    deps=[AssetKey(["raw", "raw_jira_sprints"])],
+    op_tags={"dagster/concurrency_key": "duckdb"},
     description=(
         "Issues for a single sprint partition. Closed-sprint partitions are skipped when "
         "rows already exist in DuckDB — active and future sprints are always refreshed."
@@ -259,17 +262,18 @@ def raw_jira_issues(context, jira: JiraResource) -> None:
     con = duckdb.connect(db_path)
     # Replace this sprint's rows so re-materialisation is always safe.
     con.execute("DELETE FROM raw.raw_jira_issues WHERE sprint_id = ?", [sprint_id])
-    con.executemany(
-        "INSERT INTO raw.raw_jira_issues VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [
+    if rows:
+        con.executemany(
+            "INSERT INTO raw.raw_jira_issues VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
-                r["issue_key"], r["sprint_id"], r["board_id"], r["summary"],
-                r["story_points"], r["status_category"], r["labels"],
-                r["assignee"], r["cf_sprint_id"], r["cf_sprint_name"],
-                r["cf_sprint_state"], r["_extracted_at"],
-            ]
-            for r in rows
-        ],
-    )
+                [
+                    r["issue_key"], r["sprint_id"], r["board_id"], r["summary"],
+                    r["story_points"], r["status_category"], r["labels"],
+                    r["assignee"], r["cf_sprint_id"], r["cf_sprint_name"],
+                    r["cf_sprint_state"], r["_extracted_at"],
+                ]
+                for r in rows
+            ],
+        )
     context.log.info(f"Upserted {len(rows)} issues for sprint {sprint_id} into raw.raw_jira_issues")
     con.close()

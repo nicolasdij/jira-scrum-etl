@@ -2,7 +2,7 @@
 -- Clean sprint records: parse dates, normalise state, derive sprint_number.
 
 WITH source AS (
-    SELECT * FROM raw.raw_jira_sprints
+    SELECT * FROM {{ source('raw', 'raw_jira_sprints') }}
 ),
 
 cleaned AS (

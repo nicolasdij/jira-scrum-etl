@@ -9,7 +9,7 @@
 -- GENERATE_SUBSCRIPTS / LATERAL syntax which are PostgreSQL-specific.
 
 WITH source AS (
-    SELECT * FROM raw.raw_jira_issues
+    SELECT * FROM {{ source('raw', 'raw_jira_issues') }}
 ),
 
 -- For each issue, find the subteam whose label appears earliest in the labels array.

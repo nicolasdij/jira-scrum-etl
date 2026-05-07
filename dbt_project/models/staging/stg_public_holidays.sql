@@ -7,7 +7,7 @@ WITH source AS (
         TRY_CAST(holiday_date AS DATE) AS holiday_date,
         holiday_name,
         regions
-    FROM raw.raw_public_holidays
+    FROM {{ source('raw', 'raw_public_holidays') }}
     WHERE holiday_date IS NOT NULL
 ),
 
