@@ -210,7 +210,7 @@ def gsheets_team_splits_prepopulator(
     # Read existing rows to avoid duplicates
     existing = gsheets.read_input_sheet(SHEET_TEAM_SPLITS)
     existing_keys: set[tuple] = {
-        (r.get("sprint_name"), r.get("member_name"), r.get("board"))
+        (r.get("sprint_name"), r.get("member_name"), r.get("board"), r.get("subteam"))
         for r in existing
     }
 
@@ -228,7 +228,7 @@ def gsheets_team_splits_prepopulator(
         for member_name, member_board, subteam in members:
             if member_board != board_key:
                 continue
-            key = (sprint_name, member_name, board_key)
+            key = (sprint_name, member_name, board_key, subteam)
             if key not in existing_keys:
                 # days_allocated left blank for manual entry
                 new_rows.append([sprint_name, member_name, board_key, subteam, ""])
