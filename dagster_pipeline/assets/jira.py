@@ -130,9 +130,11 @@ def raw_jira_sprints(context, jira: JiraResource) -> None:
 
     # Register any new sprint_ids as dynamic partition keys so raw_jira_issues
     # can be materialised per sprint.
-    new_ids = [str(r["sprint_id"]) for r in rows if r["sprint_id"] is not None]
+    # Deduplicate with a set — both boards can share sprint IDs, so the list may
+    # contain the same ID twice, which would cause a UNIQUE constraint failure.
+    new_ids = {str(r["sprint_id"]) for r in rows if r["sprint_id"] is not None}
     existing = set(context.instance.get_dynamic_partitions("sprints"))
-    to_add = [sid for sid in new_ids if sid not in existing]
+    to_add = list(new_ids - existing)
     if to_add:
         context.instance.add_dynamic_partitions("sprints", to_add)
         context.log.info(f"Registered {len(to_add)} new sprint partition(s): {to_add}")
@@ -154,6 +156,12 @@ def raw_jira_sprints(context, jira: JiraResource) -> None:
 )
 def raw_jira_issues(context, jira: JiraResource) -> None:
     import os
+    if not context.has_partition_key:
+        context.log.error(
+            "raw_jira_issues must be run with a sprint partition key. "
+            "Trigger via raw_jira_issues_partition_sensor or select a partition in the UI."
+        )
+        return
     sprint_id = int(context.partition_key)
     db_path = os.environ.get("DUCKDB_PATH", "data/scrum.duckdb")
 
