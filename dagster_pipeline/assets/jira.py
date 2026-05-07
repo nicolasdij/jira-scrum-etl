@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from datetime import datetime
 from typing import Any
 
@@ -16,6 +17,22 @@ import duckdb
 from dagster import AssetKey, DynamicPartitionsDefinition, asset
 
 sprint_partitions = DynamicPartitionsDefinition(name="sprints")
+
+
+def _connect_duckdb(db_path: str, retries: int = 8, delay: float = 5.0) -> duckdb.DuckDBPyConnection:
+    """Open a DuckDB write connection, retrying on file-lock conflicts.
+
+    Concurrent partition runs race for the same DuckDB file. Rather than
+    failing immediately, back off and retry to let the conflicting write finish.
+    """
+    for attempt in range(retries):
+        try:
+            return duckdb.connect(db_path)
+        except duckdb.IOException as exc:
+            if "lock" not in str(exc).lower() or attempt == retries - 1:
+                raise
+            time.sleep(delay)
+    raise AssertionError("unreachable")
 
 from dagster_pipeline.resources.jira_resource import JiraResource
 
@@ -168,7 +185,7 @@ def raw_jira_issues(context, jira: JiraResource) -> None:
     sprint_id = int(context.partition_key)
     db_path = os.environ.get("DUCKDB_PATH", "data/scrum.duckdb")
 
-    con = duckdb.connect(db_path)
+    con = _connect_duckdb(db_path)
     con.execute("CREATE SCHEMA IF NOT EXISTS raw")
 
     # Initialise the table once; never wipe it — other partitions' rows must be preserved.
@@ -259,7 +276,7 @@ def raw_jira_issues(context, jira: JiraResource) -> None:
 
     context.log.info(f"Fetched {len(rows)} issues for sprint {sprint_id} ({sprint_name})")
 
-    con = duckdb.connect(db_path)
+    con = _connect_duckdb(db_path)
     # Replace this sprint's rows so re-materialisation is always safe.
     con.execute("DELETE FROM raw.raw_jira_issues WHERE sprint_id = ?", [sprint_id])
     if rows:
