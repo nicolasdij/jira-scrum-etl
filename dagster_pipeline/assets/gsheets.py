@@ -12,7 +12,8 @@ into the raw_team_splits Google Sheet tab for upcoming (future) sprints.
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import date, datetime, timedelta
+from typing import Optional
 
 import duckdb
 from dagster import asset
@@ -28,6 +29,55 @@ SHEET_TEAM_SPLITS = "Team Splits"
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _parse_date(s: str | None) -> Optional[date]:
+    """Parse a date string from Google Sheets or Jira ISO format into a date object."""
+    if not s:
+        return None
+    s = s.strip()
+    try:
+        return date.fromisoformat(s[:10])
+    except ValueError:
+        pass
+    for fmt in ("%d/%m/%Y", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _compute_effective_days(
+    sprint_start: str | None,
+    sprint_end: str | None,
+    regions: list[str],
+    holiday_map: dict[str, set[str]],
+    time_off_ranges: list[tuple[Optional[date], Optional[date]]],
+) -> Optional[float]:
+    """Count weekdays in [sprint_start, sprint_end] minus public holidays and time off."""
+    start = _parse_date(sprint_start)
+    end = _parse_date(sprint_end)
+    if not start or not end or start > end:
+        return None
+
+    region_set = set(regions)
+    count = 0
+    current = start
+    while current <= end:
+        if current.weekday() < 5:  # Mon–Fri
+            date_str = current.strftime("%Y-%m-%d")
+            holiday_regions = holiday_map.get(date_str, set())
+            if not (region_set & holiday_regions):
+                in_time_off = any(
+                    to_start is not None and to_end is not None
+                    and to_start <= current <= to_end
+                    for to_start, to_end in time_off_ranges
+                )
+                if not in_time_off:
+                    count += 1
+        current += timedelta(days=1)
+    return float(count)
+
 
 def _db(db_path: str | None = None) -> duckdb.DuckDBPyConnection:
     path = db_path or os.environ.get("DUCKDB_PATH", "data/scrum.duckdb")
@@ -160,11 +210,13 @@ def raw_team_splits(context, gsheets: GSheetsResource) -> None:
 @asset(
     name="gsheets_team_splits_prepopulator",
     group_name="raw_gsheets",
-    deps=["raw_jira_sprints"],
+    deps=["raw_jira_sprints", "raw_time_off", "raw_public_holidays"],
     description=(
         "Inserts skeleton rows into the Team Splits sheet for any (sprint, member, board) "
         "combination that is missing — only for sprints with state='future'. "
-        "Active and closed sprints are never modified."
+        "Active and closed sprints are never modified. "
+        "days_allocated is pre-filled with each member's effective working days for the sprint, "
+        "accounting for public holidays and logged time off."
     ),
 )
 def gsheets_team_splits_prepopulator(
@@ -174,23 +226,45 @@ def gsheets_team_splits_prepopulator(
     db_path = os.environ.get("DUCKDB_PATH", "data/scrum.duckdb")
     con = duckdb.connect(db_path)
 
-    # Fetch future sprints from the raw table
-    future_sprints = con.execute(
-        "SELECT sprint_name, board_id FROM raw.raw_jira_sprints WHERE state = 'future'"
+    # Fetch future sprints with their date windows
+    future_sprints_raw = con.execute(
+        "SELECT sprint_name, board_id, start_date, end_date "
+        "FROM raw.raw_jira_sprints WHERE state = 'future'"
     ).fetchall()
 
+    # Deduplicate sprint dates by name (DELI and NFR boards share the same windows)
+    sprint_dates: dict[str, tuple[str, str]] = {}
+    future_sprints: list[tuple[str, int]] = []
+    for sprint_name, board_id, start_date, end_date in future_sprints_raw:
+        future_sprints.append((sprint_name, board_id))
+        if sprint_name not in sprint_dates:
+            sprint_dates[sprint_name] = (start_date, end_date)
+
     # Load seed data for team members
-    # Seeds are loaded by dbt; read from DuckDB if already seeded, else fall back to CSV.
     try:
         members = con.execute(
             "SELECT member_name, board, subteam FROM raw.team_members"
         ).fetchall()
     except Exception:
-        # Seeds not yet loaded — read the CSV directly
         import csv, pathlib
         seed_path = pathlib.Path(__file__).parents[2] / "dbt_project" / "seeds" / "team_members.csv"
         with open(seed_path) as f:
             members = [(r["member_name"], r["board"], r["subteam"]) for r in csv.DictReader(f)]
+
+    # Load member_regions: member_name → list[str]
+    try:
+        member_regions_map: dict[str, list[str]] = {
+            row[0]: [r.strip() for r in row[1].split(",")]
+            for row in con.execute("SELECT member_name, regions FROM raw.member_regions").fetchall()
+        }
+    except Exception:
+        import csv, pathlib
+        seed_path = pathlib.Path(__file__).parents[2] / "dbt_project" / "seeds" / "member_regions.csv"
+        with open(seed_path) as f:
+            member_regions_map = {
+                r["member_name"]: [reg.strip() for reg in r["regions"].split(",")]
+                for r in csv.DictReader(f)
+            }
 
     # Load board_config to resolve board_id → board_key
     try:
@@ -201,11 +275,49 @@ def gsheets_team_splits_prepopulator(
     except Exception:
         board_map = {74: "DELI", 212: "NFR"}
 
+    # Load public holidays: date_str (YYYY-MM-DD) → set of regions
+    holiday_map: dict[str, set[str]] = {}
+    try:
+        for hdate, hregions in con.execute(
+            "SELECT holiday_date, regions FROM raw.raw_public_holidays"
+        ).fetchall():
+            date_key = _parse_date(hdate)
+            if date_key:
+                key_str = date_key.strftime("%Y-%m-%d")
+                if key_str not in holiday_map:
+                    holiday_map[key_str] = set()
+                for region in [r.strip() for r in (hregions or "").split(",") if r.strip()]:
+                    holiday_map[key_str].add(region)
+    except Exception:
+        context.log.warning("raw_public_holidays not available; holidays will not be deducted")
+
+    # Load time off: member_name → list of (parsed_start, parsed_end)
+    time_off_map: dict[str, list[tuple]] = {}
+    try:
+        for member_name, to_start, to_end in con.execute(
+            "SELECT member_name, start_date, end_date FROM raw.raw_time_off"
+        ).fetchall():
+            if member_name not in time_off_map:
+                time_off_map[member_name] = []
+            time_off_map[member_name].append((_parse_date(to_start), _parse_date(to_end)))
+    except Exception:
+        context.log.warning("raw_time_off not available; time off will not be deducted")
+
     con.close()
 
     if not future_sprints:
         context.log.info("No future sprints found; nothing to pre-populate.")
         return
+
+    # Pre-compute effective days for each (sprint_name, member_name) combination
+    unique_members = {m[0] for m in members}
+    effective_days_cache: dict[tuple[str, str], int | str] = {}
+    for sprint_name, (sprint_start, sprint_end) in sprint_dates.items():
+        for member_name in unique_members:
+            regions = member_regions_map.get(member_name, [])
+            time_offs = time_off_map.get(member_name, [])
+            days = _compute_effective_days(sprint_start, sprint_end, regions, holiday_map, time_offs)
+            effective_days_cache[(sprint_name, member_name)] = days if days is not None else ""
 
     # Read existing rows to avoid duplicates
     existing = gsheets.read_input_sheet(SHEET_TEAM_SPLITS)
@@ -230,8 +342,8 @@ def gsheets_team_splits_prepopulator(
                 continue
             key = (sprint_name, member_name, board_key, subteam)
             if key not in existing_keys:
-                # days_allocated left blank for manual entry
-                new_rows.append([sprint_name, member_name, board_key, subteam, ""])
+                days_allocated = effective_days_cache.get((sprint_name, member_name), "")
+                new_rows.append([sprint_name, member_name, board_key, subteam, days_allocated])
                 existing_keys.add(key)
 
     if new_rows:

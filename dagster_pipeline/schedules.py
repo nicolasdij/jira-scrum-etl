@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dagster import (
+    AssetKey,
     AssetSelection,
     DefaultScheduleStatus,
     RunRequest,
@@ -16,12 +17,14 @@ from dagster import (
 # Jobs
 # ─────────────────────────────────────────────────────────────────────────────
 
+# raw_jira_issues is partitioned per-sprint and managed by its own sensor/job below.
+_partitioned_issues = AssetSelection.assets(AssetKey("raw_jira_issues"))
+
 # Full pipeline: extract → dbt transform → export.
-# AssetSelection.all() ensures dbt assets (staging/intermediate/marts) are
-# included and Dagster respects the full dependency graph when ordering execution.
+# raw_jira_issues is excluded because it is a partitioned asset handled separately.
 full_pipeline_job = define_asset_job(
     name="full_pipeline_job",
-    selection=AssetSelection.all(),
+    selection=AssetSelection.all() - _partitioned_issues,
     description=(
         "Full ETL run: extract from Jira and Google Sheets, run dbt transforms, "
         "write results back to Google Sheets."
@@ -31,8 +34,15 @@ full_pipeline_job = define_asset_job(
 # On-demand extraction only (no export) — useful for mid-sprint data refresh
 extraction_only_job = define_asset_job(
     name="extraction_only_job",
-    selection=AssetSelection.groups("raw_jira", "raw_gsheets"),
+    selection=AssetSelection.groups("raw_jira", "raw_gsheets") - _partitioned_issues,
     description="Extract raw data from Jira and Google Sheets into DuckDB without running dbt.",
+)
+
+# Per-sprint partitioned job — one run per sprint partition.
+raw_jira_issues_job = define_asset_job(
+    name="raw_jira_issues_job",
+    selection=_partitioned_issues,
+    description="Materialises a single sprint partition of raw_jira_issues.",
 )
 
 # Pre-populate team splits for upcoming sprints
@@ -74,6 +84,72 @@ team_splits_monday_schedule = ScheduleDefinition(
 # ─────────────────────────────────────────────────────────────────────────────
 # Jira sprint sensor (optional — polls for sprint state changes)
 # ─────────────────────────────────────────────────────────────────────────────
+
+@sensor(
+    job=raw_jira_issues_job,
+    minimum_interval_seconds=3600,
+    description=(
+        "Triggers raw_jira_issues materialisation for each sprint partition: "
+        "once for closed sprints (skipped internally if already loaded), "
+        "and daily for active/future sprints to keep issue states fresh."
+    ),
+)
+def raw_jira_issues_partition_sensor(context):
+    """Dispatch a raw_jira_issues run for every sprint partition that needs updating."""
+    import duckdb
+    import os
+    from datetime import date
+
+    db_path = os.environ.get("DUCKDB_PATH", "data/scrum.duckdb")
+
+    all_partitions = context.instance.get_dynamic_partitions("sprints")
+    if not all_partitions:
+        yield SkipReason("No sprint partitions registered yet; run raw_jira_sprints first.")
+        return
+
+    try:
+        con = duckdb.connect(db_path, read_only=True)
+        sprint_states = {
+            str(row[0]): row[1]
+            for row in con.execute(
+                "SELECT sprint_id, state FROM raw.raw_jira_sprints"
+            ).fetchall()
+        }
+        loaded_sprint_ids = {
+            str(row[0])
+            for row in con.execute(
+                "SELECT DISTINCT sprint_id FROM raw.raw_jira_issues"
+            ).fetchall()
+        }
+        con.close()
+    except Exception:
+        yield SkipReason("DuckDB not yet initialised; skipping.")
+        return
+
+    today = date.today().isoformat()
+    run_requests = []
+    for partition_key in all_partitions:
+        state = sprint_states.get(partition_key, "unknown")
+        if state == "closed":
+            if partition_key not in loaded_sprint_ids:
+                # First-time load for this closed sprint.
+                run_requests.append(RunRequest(
+                    run_key=f"sprint_{partition_key}_closed_initial",
+                    partition_key=partition_key,
+                ))
+            # Already loaded closed sprint: asset guards internally, nothing to do.
+        else:
+            # Active/future sprints: refresh once per day.
+            run_requests.append(RunRequest(
+                run_key=f"sprint_{partition_key}_{today}",
+                partition_key=partition_key,
+            ))
+
+    if run_requests:
+        yield from run_requests
+    else:
+        yield SkipReason("All sprint partitions are up to date.")
+
 
 @sensor(
     job=full_pipeline_job,

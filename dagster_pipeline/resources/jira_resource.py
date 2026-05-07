@@ -84,8 +84,12 @@ class JiraResource(ConfigurableResource):
         session = self._session()
         return list(self._paginate(session, url, list_key="values"))
 
-    def get_issues_for_sprint(self, sprint_id: int) -> list[dict]:
-        """Return all issues for a given sprint with the fields required by the pipeline."""
+    def get_issues_for_sprint(self, sprint_id: int, project_key: str | None = None) -> list[dict]:
+        """Return all issues for a given sprint with the fields required by the pipeline.
+
+        project_key filters results to a single Jira project, preventing issues from
+        unrelated projects that share the same sprint from leaking into the pipeline.
+        """
         url = f"{self.base_url}/rest/agile/1.0/sprint/{sprint_id}/issue"
         fields = ",".join([
             "summary",
@@ -95,7 +99,10 @@ class JiraResource(ConfigurableResource):
             "customfield_10105",   # story points
             "customfield_10103",   # sprint descriptor array
         ])
+        extra_params: dict = {"fields": fields}
+        if project_key:
+            extra_params["jql"] = f"project = {project_key}"
         session = self._session()
         return list(
-            self._paginate(session, url, list_key="issues", extra_params={"fields": fields})
+            self._paginate(session, url, list_key="issues", extra_params=extra_params)
         )

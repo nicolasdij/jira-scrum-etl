@@ -13,7 +13,9 @@ from datetime import datetime
 from typing import Any
 
 import duckdb
-from dagster import asset
+from dagster import DynamicPartitionsDefinition, asset
+
+sprint_partitions = DynamicPartitionsDefinition(name="sprints")
 
 from dagster_pipeline.resources.jira_resource import JiraResource
 
@@ -126,6 +128,15 @@ def raw_jira_sprints(context, jira: JiraResource) -> None:
     context.log.info(f"Loaded {len(rows)} sprint rows into raw.raw_jira_sprints")
     con.close()
 
+    # Register any new sprint_ids as dynamic partition keys so raw_jira_issues
+    # can be materialised per sprint.
+    new_ids = [str(r["sprint_id"]) for r in rows if r["sprint_id"] is not None]
+    existing = set(context.instance.get_dynamic_partitions("sprints"))
+    to_add = [sid for sid in new_ids if sid not in existing]
+    if to_add:
+        context.instance.add_dynamic_partitions("sprints", to_add)
+        context.log.info(f"Registered {len(to_add)} new sprint partition(s): {to_add}")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Asset: raw_jira_issues
@@ -134,67 +145,24 @@ def raw_jira_sprints(context, jira: JiraResource) -> None:
 @asset(
     name="raw_jira_issues",
     group_name="raw_jira",
+    partitions_def=sprint_partitions,
     deps=["raw_jira_sprints"],
-    description="All issues for all sprints, including story points, status, labels, and sprint ref.",
+    description=(
+        "Issues for a single sprint partition. Closed-sprint partitions are skipped when "
+        "rows already exist in DuckDB — active and future sprints are always refreshed."
+    ),
 )
 def raw_jira_issues(context, jira: JiraResource) -> None:
     import os
+    sprint_id = int(context.partition_key)
     db_path = os.environ.get("DUCKDB_PATH", "data/scrum.duckdb")
-
-    # Read sprint IDs from DuckDB (populated by raw_jira_sprints)
-    con = duckdb.connect(db_path)
-    sprint_rows = con.execute(
-        "SELECT sprint_id, board_id, sprint_name FROM raw.raw_jira_sprints"
-    ).fetchall()
-    con.close()
-
-    rows: list[dict] = []
-    for sprint_id, board_id, sprint_name in sprint_rows:
-        context.log.info(f"Fetching issues for sprint {sprint_id} ({sprint_name})")
-        issues = jira.get_issues_for_sprint(sprint_id)
-        for issue in issues:
-            fields = issue.get("fields", {})
-
-            # Story points
-            story_points = fields.get("customfield_10105")
-
-            # Status category
-            status_obj = fields.get("status") or {}
-            status_category = (
-                (status_obj.get("statusCategory") or {}).get("key") or ""
-            ).lower()
-
-            # Labels — keep as JSON string; first sub-team label wins (resolved in staging)
-            labels = fields.get("labels") or []
-
-            # Sprint ref from customfield_10103
-            sprint_ref = _resolve_sprint_from_field(fields.get("customfield_10103"))
-
-            # Assignee
-            assignee_obj = fields.get("assignee") or {}
-            assignee = assignee_obj.get("displayName")
-
-            rows.append({
-                "issue_key": issue.get("key"),
-                "sprint_id": sprint_id,
-                "board_id": board_id,
-                "summary": fields.get("summary"),
-                "story_points": story_points,
-                "status_category": status_category,
-                "labels": json.dumps(labels),
-                "assignee": assignee,
-                "cf_sprint_id": sprint_ref["id"],
-                "cf_sprint_name": sprint_ref["name"],
-                "cf_sprint_state": sprint_ref["state"],
-                "_extracted_at": datetime.utcnow().isoformat(),
-            })
-
-    context.log.info(f"Total issues fetched: {len(rows)}")
 
     con = duckdb.connect(db_path)
     con.execute("CREATE SCHEMA IF NOT EXISTS raw")
+
+    # Initialise the table once; never wipe it — other partitions' rows must be preserved.
     con.execute("""
-        CREATE OR REPLACE TABLE raw.raw_jira_issues (
+        CREATE TABLE IF NOT EXISTS raw.raw_jira_issues (
             issue_key       VARCHAR,
             sprint_id       INTEGER,
             board_id        INTEGER,
@@ -209,6 +177,80 @@ def raw_jira_issues(context, jira: JiraResource) -> None:
             _extracted_at   VARCHAR
         )
     """)
+
+    sprint_row = con.execute(
+        "SELECT board_id, sprint_name, state FROM raw.raw_jira_sprints WHERE sprint_id = ?",
+        [sprint_id],
+    ).fetchone()
+
+    if sprint_row is None:
+        context.log.warning(f"Sprint {sprint_id} not found in raw_jira_sprints; skipping.")
+        con.close()
+        return
+
+    board_id, sprint_name, state = sprint_row
+
+    # Closed sprints are immutable — skip the Jira fetch if we already have their issues.
+    if state == "closed":
+        existing = con.execute(
+            "SELECT COUNT(*) FROM raw.raw_jira_issues WHERE sprint_id = ?", [sprint_id]
+        ).fetchone()[0]
+        if existing > 0:
+            context.log.info(
+                f"Sprint {sprint_id} ({sprint_name}) is closed and already has "
+                f"{existing} issues in DuckDB — skipping fetch."
+            )
+            con.close()
+            return
+
+    try:
+        board_map = {
+            row[0]: row[1]
+            for row in con.execute("SELECT board_id, board_key FROM raw.board_config").fetchall()
+        }
+    except Exception:
+        board_map = {74: "DELI", 212: "NFR"}
+
+    con.close()
+
+    project_key = board_map.get(board_id)
+    context.log.info(
+        f"Fetching issues for sprint {sprint_id} ({sprint_name}, state={state}), "
+        f"project={project_key}"
+    )
+    issues = jira.get_issues_for_sprint(sprint_id, project_key=project_key)
+
+    rows: list[dict] = []
+    for issue in issues:
+        fields = issue.get("fields", {})
+        story_points = fields.get("customfield_10105")
+        status_obj = fields.get("status") or {}
+        status_category = (
+            (status_obj.get("statusCategory") or {}).get("key") or ""
+        ).lower()
+        labels = fields.get("labels") or []
+        sprint_ref = _resolve_sprint_from_field(fields.get("customfield_10103"))
+        assignee_obj = fields.get("assignee") or {}
+        rows.append({
+            "issue_key": issue.get("key"),
+            "sprint_id": sprint_id,
+            "board_id": board_id,
+            "summary": fields.get("summary"),
+            "story_points": story_points,
+            "status_category": status_category,
+            "labels": json.dumps(labels),
+            "assignee": assignee_obj.get("displayName"),
+            "cf_sprint_id": sprint_ref["id"],
+            "cf_sprint_name": sprint_ref["name"],
+            "cf_sprint_state": sprint_ref["state"],
+            "_extracted_at": datetime.utcnow().isoformat(),
+        })
+
+    context.log.info(f"Fetched {len(rows)} issues for sprint {sprint_id} ({sprint_name})")
+
+    con = duckdb.connect(db_path)
+    # Replace this sprint's rows so re-materialisation is always safe.
+    con.execute("DELETE FROM raw.raw_jira_issues WHERE sprint_id = ?", [sprint_id])
     con.executemany(
         "INSERT INTO raw.raw_jira_issues VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
@@ -221,5 +263,5 @@ def raw_jira_issues(context, jira: JiraResource) -> None:
             for r in rows
         ],
     )
-    context.log.info(f"Loaded {len(rows)} issue rows into raw.raw_jira_issues")
+    context.log.info(f"Upserted {len(rows)} issues for sprint {sprint_id} into raw.raw_jira_issues")
     con.close()

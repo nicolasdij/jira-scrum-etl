@@ -19,6 +19,8 @@ from dagster_pipeline.resources.gsheets_resource import GSheetsResource
 from dagster_pipeline.resources.jira_resource import JiraResource
 from dagster_pipeline.schedules import (
     jira_sprint_closed_sensor,
+    raw_jira_issues_job,
+    raw_jira_issues_partition_sensor,
     team_splits_monday_schedule,
     weekly_tuesday_schedule,
     full_pipeline_job,
@@ -96,7 +98,7 @@ resources = {
 defs = Definitions(
     assets=[*_python_assets, *_dbt_asset_list],
     resources=resources,
-    jobs=[full_pipeline_job, extraction_only_job, team_splits_prepopulate_job],
+    jobs=[full_pipeline_job, extraction_only_job, team_splits_prepopulate_job, raw_jira_issues_job],
     schedules=[weekly_tuesday_schedule, team_splits_monday_schedule],
-    sensors=[jira_sprint_closed_sensor],
+    sensors=[jira_sprint_closed_sensor, raw_jira_issues_partition_sensor],
 )
