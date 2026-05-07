@@ -8,6 +8,7 @@ Writes two tabs into the output spreadsheet:
 from __future__ import annotations
 
 import os
+from datetime import date, datetime
 from typing import Any
 
 import duckdb
@@ -19,6 +20,12 @@ CAPACITY_PLAN_SHEET = "Capacity Plan"
 SPRINT_HISTORY_SHEET = "Sprint History"
 
 
+def _serialize(value: Any) -> Any:
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return value
+
+
 def _query_to_rows(db_path: str, query: str) -> list[list[Any]]:
     """Execute a query against DuckDB and return rows as a list of lists (header first)."""
     con = duckdb.connect(db_path, read_only=True)
@@ -26,7 +33,7 @@ def _query_to_rows(db_path: str, query: str) -> list[list[Any]]:
     columns = [desc[0] for desc in rel.description]
     data = rel.fetchall()
     con.close()
-    return [columns] + [list(row) for row in data]
+    return [columns] + [[_serialize(v) for v in row] for row in data]
 
 
 @asset(

@@ -1,3 +1,4 @@
+{{ config(materialized='table') }}
 -- stg_jira_sprints
 -- Clean sprint records: parse dates, normalise state, derive sprint_number.
 

@@ -8,13 +8,17 @@
 -- "Next sprint" = the future sprint with the lowest start_date.
 
 WITH next_sprint AS (
-    SELECT
-        sprint_id,
-        sprint_name,
-        board_id
-    FROM {{ ref('stg_jira_sprints') }}
-    WHERE sprint_state = 'future'
-    QUALIFY ROW_NUMBER() OVER (ORDER BY start_date) = 1
+    SELECT sprint_id, sprint_name, board_id
+    FROM (
+        SELECT
+            sprint_id,
+            sprint_name,
+            board_id,
+            ROW_NUMBER() OVER (ORDER BY start_date) AS rn
+        FROM {{ ref('stg_jira_sprints') }}
+        WHERE sprint_state = 'future'
+    ) sub
+    WHERE rn = 1
 ),
 
 -- Most recent rolling velocity per sub-team
