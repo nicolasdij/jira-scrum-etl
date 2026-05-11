@@ -15,6 +15,7 @@ from typing import Any
 
 import duckdb
 from dagster import AssetKey, DynamicPartitionsDefinition, asset
+from dagster_pipeline.resources.jira_resource import JiraResource
 
 sprint_partitions = DynamicPartitionsDefinition(name="sprints")
 
@@ -34,7 +35,6 @@ def _connect_duckdb(db_path: str, retries: int = 8, delay: float = 5.0) -> duckd
             time.sleep(delay)
     raise AssertionError("unreachable")
 
-from dagster_pipeline.resources.jira_resource import JiraResource
 
 # Board IDs from CLAUDE.md
 BOARD_IDS = [74, 212]  # DELI=74, NFR=212
@@ -119,7 +119,7 @@ def raw_jira_sprints(context, jira: JiraResource) -> None:
 
     context.log.info(f"Total sprints fetched: {len(rows)}")
 
-    con = duckdb.connect(db_path)
+    con = _connect_duckdb(db_path)
     con.execute("CREATE SCHEMA IF NOT EXISTS raw")
     con.execute("""
         CREATE OR REPLACE TABLE raw.raw_jira_sprints (
@@ -196,6 +196,7 @@ def raw_jira_issues(context, jira: JiraResource) -> None:
             board_id        INTEGER,
             summary         VARCHAR,
             story_points    DOUBLE,
+            t_shirt_size    DOUBLE,
             status_category VARCHAR,
             labels          VARCHAR,
             assignee        VARCHAR,
@@ -205,6 +206,8 @@ def raw_jira_issues(context, jira: JiraResource) -> None:
             _extracted_at   VARCHAR
         )
     """)
+    # Migrate tables created before t_shirt_size was added.
+    con.execute("ALTER TABLE raw.raw_jira_issues ADD COLUMN IF NOT EXISTS t_shirt_size DOUBLE")
 
     sprint_row = con.execute(
         "SELECT board_id, sprint_name, state FROM raw.raw_jira_sprints WHERE sprint_id = ?",
@@ -220,9 +223,10 @@ def raw_jira_issues(context, jira: JiraResource) -> None:
 
     # Closed sprints are immutable — skip the Jira fetch if we already have their issues.
     if state == "closed":
-        existing = con.execute(
+        existing_row = con.execute(
             "SELECT COUNT(*) FROM raw.raw_jira_issues WHERE sprint_id = ?", [sprint_id]
-        ).fetchone()[0]
+        ).fetchone()
+        existing = existing_row[0] if existing_row is not None else 0
         if existing > 0:
             context.log.info(
                 f"Sprint {sprint_id} ({sprint_name}) is closed and already has "
@@ -252,6 +256,7 @@ def raw_jira_issues(context, jira: JiraResource) -> None:
     for issue in issues:
         fields = issue.get("fields", {})
         story_points = fields.get("customfield_10105")
+        t_shirt_size = fields.get("customfield_10834")
         status_obj = fields.get("status") or {}
         status_category = (
             (status_obj.get("statusCategory") or {}).get("key") or ""
@@ -265,6 +270,7 @@ def raw_jira_issues(context, jira: JiraResource) -> None:
             "board_id": board_id,
             "summary": fields.get("summary"),
             "story_points": story_points,
+            "t_shirt_size": t_shirt_size,
             "status_category": status_category,
             "labels": json.dumps(labels),
             "assignee": assignee_obj.get("displayName"),
@@ -281,11 +287,17 @@ def raw_jira_issues(context, jira: JiraResource) -> None:
     con.execute("DELETE FROM raw.raw_jira_issues WHERE sprint_id = ?", [sprint_id])
     if rows:
         con.executemany(
-            "INSERT INTO raw.raw_jira_issues VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            """
+            INSERT INTO raw.raw_jira_issues (
+                issue_key, sprint_id, board_id, summary,
+                story_points, t_shirt_size, status_category, labels,
+                assignee, cf_sprint_id, cf_sprint_name, cf_sprint_state, _extracted_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
             [
                 [
                     r["issue_key"], r["sprint_id"], r["board_id"], r["summary"],
-                    r["story_points"], r["status_category"], r["labels"],
+                    r["story_points"], r["t_shirt_size"], r["status_category"], r["labels"],
                     r["assignee"], r["cf_sprint_id"], r["cf_sprint_name"],
                     r["cf_sprint_state"], r["_extracted_at"],
                 ]

@@ -15,6 +15,8 @@ import os
 from datetime import date, datetime, timedelta
 from typing import Optional
 
+import time
+
 import duckdb
 from dagster import AssetKey, asset
 
@@ -79,11 +81,18 @@ def _compute_effective_days(
     return float(count)
 
 
-def _db(db_path: str | None = None) -> duckdb.DuckDBPyConnection:
+def _db(db_path: str | None = None, retries: int = 8, delay: float = 5.0) -> duckdb.DuckDBPyConnection:
     path = db_path or os.environ.get("DUCKDB_PATH", "data/scrum.duckdb")
-    con = duckdb.connect(path)
-    con.execute("CREATE SCHEMA IF NOT EXISTS raw")
-    return con
+    for attempt in range(retries):
+        try:
+            con = duckdb.connect(path)
+            con.execute("CREATE SCHEMA IF NOT EXISTS raw")
+            return con
+        except duckdb.IOException as exc:
+            if "lock" not in str(exc).lower() or attempt == retries - 1:
+                raise
+            time.sleep(delay)
+    raise AssertionError("unreachable")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

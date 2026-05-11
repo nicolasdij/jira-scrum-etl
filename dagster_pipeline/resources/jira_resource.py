@@ -98,6 +98,7 @@ class JiraResource(ConfigurableResource):
             "assignee",
             "customfield_10105",   # story points
             "customfield_10103",   # sprint descriptor array
+            "customfield_10834",   # t-shirt size
         ])
         extra_params: dict = {"fields": fields}
         if project_key:
