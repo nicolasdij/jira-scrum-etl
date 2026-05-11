@@ -49,6 +49,7 @@ base AS (
 
 SELECT
     b.*,
-    fs.subteam
+    COALESCE(fs.subteam, NULLIF(bc.default_subteam, '')) AS subteam
 FROM base b
 LEFT JOIN first_subteam fs USING (issue_key)
+LEFT JOIN {{ ref('board_config') }} bc ON b.board_id = bc.board_id

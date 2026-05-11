@@ -27,6 +27,9 @@ seeds:
     board_config:
       +column_types:
         board_id: integer
+        board_key: varchar
+        board_name: varchar
+        default_subteam: varchar
 
 models:
   jira_scrum:

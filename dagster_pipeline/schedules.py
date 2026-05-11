@@ -110,15 +110,19 @@ def raw_jira_issues_partition_sensor(context):
     try:
         con = duckdb.connect(db_path, read_only=True)
         sprint_states = {
-            str(row[0]): row[1]
+            row[0]: row[1]
             for row in con.execute(
-                "SELECT sprint_id, state FROM raw.raw_jira_sprints"
+                "SELECT sprint_name, state FROM raw.raw_jira_sprints"
             ).fetchall()
         }
-        loaded_sprint_ids = {
-            str(row[0])
+        loaded_sprint_names = {
+            row[0]
             for row in con.execute(
-                "SELECT DISTINCT sprint_id FROM raw.raw_jira_issues"
+                """
+                SELECT DISTINCT rs.sprint_name
+                FROM raw.raw_jira_issues ri
+                JOIN raw.raw_jira_sprints rs ON ri.sprint_id = rs.sprint_id
+                """
             ).fetchall()
         }
         con.close()
@@ -131,7 +135,7 @@ def raw_jira_issues_partition_sensor(context):
     for partition_key in all_partitions:
         state = sprint_states.get(partition_key, "unknown")
         if state == "closed":
-            if partition_key not in loaded_sprint_ids:
+            if partition_key not in loaded_sprint_names:
                 # First-time load for this closed sprint.
                 run_requests.append(RunRequest(
                     run_key=f"sprint_{partition_key}_closed_initial",

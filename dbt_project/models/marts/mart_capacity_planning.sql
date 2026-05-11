@@ -14,7 +14,7 @@ WITH next_sprint AS (
             sprint_id,
             sprint_name,
             board_id,
-            ROW_NUMBER() OVER (ORDER BY start_date) AS rn
+            ROW_NUMBER() OVER (PARTITION BY board_id ORDER BY start_date) AS rn
         FROM {{ ref('stg_jira_sprints') }}
         WHERE sprint_state = 'future'
     ) sub

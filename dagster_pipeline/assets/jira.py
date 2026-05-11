@@ -71,20 +71,28 @@ def _parse_sprint_descriptor(descriptor: str) -> dict[str, str | None]:
 
 
 def _resolve_sprint_from_field(field_value: Any) -> dict[str, str | None]:
-    """Extract sprint info from customfield_10103 (list of descriptor strings or dicts)."""
+    """Extract sprint info from customfield_10103 (list of descriptor strings or dicts).
+
+    An issue that spans sprints appears in multiple entries. We sort by startDate
+    descending and pick the first, so the sprint the issue was completed in wins.
+    """
     if not field_value:
         return {"id": None, "name": None, "state": None, "startDate": None, "endDate": None}
-    last = field_value[-1]
-    # Newer Jira versions may return dicts directly
-    if isinstance(last, dict):
-        return {
-            "id": str(last.get("id", "")),
-            "name": last.get("name"),
-            "state": last.get("state"),
-            "startDate": last.get("startDate"),
-            "endDate": last.get("endDate"),
-        }
-    return _parse_sprint_descriptor(str(last))
+    parsed = []
+    for entry in field_value:
+        if isinstance(entry, dict):
+            parsed.append({
+                "id": str(entry.get("id", "")),
+                "name": entry.get("name"),
+                "state": entry.get("state"),
+                "startDate": entry.get("startDate"),
+                "endDate": entry.get("endDate"),
+            })
+        else:
+            parsed.append(_parse_sprint_descriptor(str(entry)))
+    # Entries with no startDate sort last (empty string < any ISO date string).
+    parsed.sort(key=lambda d: d.get("startDate") or "", reverse=True)
+    return parsed[0]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -146,11 +154,11 @@ def raw_jira_sprints(context, jira: JiraResource) -> None:
     context.log.info(f"Loaded {len(rows)} sprint rows into raw.raw_jira_sprints")
     con.close()
 
-    # Register any new sprint_ids as dynamic partition keys so raw_jira_issues
+    # Register any new sprint names as dynamic partition keys so raw_jira_issues
     # can be materialised per sprint.
-    # Deduplicate with a set — both boards can share sprint IDs, so the list may
-    # contain the same ID twice, which would cause a UNIQUE constraint failure.
-    new_ids = {str(r["sprint_id"]) for r in rows if r["sprint_id"] is not None}
+    # Deduplicate with a set — both boards can share sprint names, so the list may
+    # contain the same name twice, which would cause a UNIQUE constraint failure.
+    new_ids = {r["sprint_name"] for r in rows if r["sprint_name"] is not None}
     existing = set(context.instance.get_dynamic_partitions("sprints"))
     to_add = list(new_ids - existing)
     if to_add:
@@ -182,7 +190,7 @@ def raw_jira_issues(context, jira: JiraResource) -> None:
             "Trigger via raw_jira_issues_partition_sensor or select a partition in the UI."
         )
         return
-    sprint_id = int(context.partition_key)
+    sprint_name = context.partition_key
     db_path = os.environ.get("DUCKDB_PATH", "data/scrum.duckdb")
 
     con = _connect_duckdb(db_path)
@@ -210,16 +218,16 @@ def raw_jira_issues(context, jira: JiraResource) -> None:
     con.execute("ALTER TABLE raw.raw_jira_issues ADD COLUMN IF NOT EXISTS t_shirt_size DOUBLE")
 
     sprint_row = con.execute(
-        "SELECT board_id, sprint_name, state FROM raw.raw_jira_sprints WHERE sprint_id = ?",
-        [sprint_id],
+        "SELECT sprint_id, board_id, state FROM raw.raw_jira_sprints WHERE sprint_name = ?",
+        [sprint_name],
     ).fetchone()
 
     if sprint_row is None:
-        context.log.warning(f"Sprint {sprint_id} not found in raw_jira_sprints; skipping.")
+        context.log.warning(f"Sprint '{sprint_name}' not found in raw_jira_sprints; skipping.")
         con.close()
         return
 
-    board_id, sprint_name, state = sprint_row
+    sprint_id, board_id, state = sprint_row
 
     # Closed sprints are immutable — skip the Jira fetch if we already have their issues.
     if state == "closed":
@@ -235,22 +243,10 @@ def raw_jira_issues(context, jira: JiraResource) -> None:
             con.close()
             return
 
-    try:
-        board_map = {
-            row[0]: row[1]
-            for row in con.execute("SELECT board_id, board_key FROM raw.board_config").fetchall()
-        }
-    except Exception:
-        board_map = {74: "DELI", 212: "NFR"}
-
     con.close()
 
-    project_key = board_map.get(board_id)
-    context.log.info(
-        f"Fetching issues for sprint {sprint_id} ({sprint_name}, state={state}), "
-        f"project={project_key}"
-    )
-    issues = jira.get_issues_for_sprint(sprint_id, project_key=project_key)
+    context.log.info(f"Fetching issues for sprint {sprint_id} ({sprint_name}, state={state})")
+    issues = jira.get_issues_for_sprint(sprint_id)
 
     rows: list[dict] = []
     for issue in issues:
@@ -261,12 +257,19 @@ def raw_jira_issues(context, jira: JiraResource) -> None:
         status_category = (
             (status_obj.get("statusCategory") or {}).get("key") or ""
         ).lower()
+        # Jira maps "Cancelled" to statusCategory "done", but cancelled issues must not
+        # count toward velocity or burndown — override to a distinct value.
+        if (status_obj.get("name") or "").lower() == "cancelled":
+            status_category = "cancelled"
         labels = fields.get("labels") or []
         sprint_ref = _resolve_sprint_from_field(fields.get("customfield_10103"))
         assignee_obj = fields.get("assignee") or {}
         rows.append({
             "issue_key": issue.get("key"),
-            "sprint_id": sprint_id,
+            # Use the canonical sprint (latest startDate) rather than the partition key so
+            # issues that were started in one sprint but finished in the next are attributed
+            # to the sprint they were completed in.
+            "sprint_id": int(sprint_ref["id"]) if sprint_ref.get("id") else sprint_id,
             "board_id": board_id,
             "summary": fields.get("summary"),
             "story_points": story_points,
@@ -283,9 +286,18 @@ def raw_jira_issues(context, jira: JiraResource) -> None:
     context.log.info(f"Fetched {len(rows)} issues for sprint {sprint_id} ({sprint_name})")
 
     con = _connect_duckdb(db_path)
-    # Replace this sprint's rows so re-materialisation is always safe.
+    # Delete rows for this partition (covers normal re-materialisation).
     con.execute("DELETE FROM raw.raw_jira_issues WHERE sprint_id = ?", [sprint_id])
     if rows:
+        # Also delete by issue_key so that any row previously attributed to a different
+        # sprint (e.g. a carry-over issue stored under an earlier sprint_id) is removed
+        # before we insert the authoritative version.
+        issue_keys = list({r["issue_key"] for r in rows if r["issue_key"]})
+        placeholders = ",".join("?" * len(issue_keys))
+        con.execute(
+            f"DELETE FROM raw.raw_jira_issues WHERE issue_key IN ({placeholders})",
+            issue_keys,
+        )
         con.executemany(
             """
             INSERT INTO raw.raw_jira_issues (

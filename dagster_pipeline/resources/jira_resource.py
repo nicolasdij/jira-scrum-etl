@@ -51,7 +51,24 @@ class JiraResource(ConfigurableResource):
                 log.warning(f"HTTP {resp.status_code} on {url}; retrying in {wait}s (attempt {attempt})")
                 time.sleep(wait)
                 continue
-            resp.raise_for_status()
+            if not resp.ok:
+                log.warning(f"HTTP {resp.status_code} on {url}: {resp.text}")
+                resp.raise_for_status()
+            return resp.json()
+        resp.raise_for_status()  # final raise if all retries exhausted
+
+    def _post(self, session: requests.Session, url: str, body: dict) -> Any:
+        log = get_dagster_logger()
+        for attempt in range(1, self.retry_attempts + 1):
+            resp = session.post(url, json=body)
+            if resp.status_code == 429 or resp.status_code >= 500:
+                wait = self.retry_backoff_seconds * attempt
+                log.warning(f"HTTP {resp.status_code} on {url}; retrying in {wait}s (attempt {attempt})")
+                time.sleep(wait)
+                continue
+            if not resp.ok:
+                log.warning(f"HTTP {resp.status_code} on {url}: {resp.text}")
+                resp.raise_for_status()
             return resp.json()
         resp.raise_for_status()  # final raise if all retries exhausted
 
@@ -74,6 +91,24 @@ class JiraResource(ConfigurableResource):
             if not items:
                 break
 
+    def _paginate_post(
+        self,
+        session: requests.Session,
+        url: str,
+        body: dict,
+        list_key: str,
+    ) -> Generator[dict, None, None]:
+        """Yield items from a cursor-paginated Jira v3 endpoint (nextPageToken)."""
+        page_body = {**body, "maxResults": self.max_results_per_page}
+        while True:
+            data = self._post(session, url, page_body)
+            items = data.get(list_key, [])
+            yield from items
+            next_token = data.get("nextPageToken")
+            if not next_token or not items:
+                break
+            page_body = {**page_body, "nextPageToken": next_token}
+
     # ------------------------------------------------------------------ #
     # Public API                                                           #
     # ------------------------------------------------------------------ #
@@ -84,14 +119,14 @@ class JiraResource(ConfigurableResource):
         session = self._session()
         return list(self._paginate(session, url, list_key="values"))
 
-    def get_issues_for_sprint(self, sprint_id: int, project_key: str | None = None) -> list[dict]:
+    def get_issues_for_sprint(self, sprint_id: int) -> list[dict]:
         """Return all issues for a given sprint with the fields required by the pipeline.
 
-        project_key filters results to a single Jira project, preventing issues from
-        unrelated projects that share the same sprint from leaking into the pipeline.
+        Uses the REST API v3 /search/jql endpoint (POST, cursor-based pagination) so the
+        board's own saved filter is bypassed and issues from all projects are included.
         """
-        url = f"{self.base_url}/rest/agile/1.0/sprint/{sprint_id}/issue"
-        fields = ",".join([
+        url = f"{self.base_url}/rest/api/3/search/jql"
+        fields = [
             "summary",
             "status",
             "labels",
@@ -99,11 +134,13 @@ class JiraResource(ConfigurableResource):
             "customfield_10105",   # story points
             "customfield_10103",   # sprint descriptor array
             "customfield_10834",   # t-shirt size
-        ])
-        extra_params: dict = {"fields": fields}
-        if project_key:
-            extra_params["jql"] = f"project = {project_key}"
+        ]
         session = self._session()
         return list(
-            self._paginate(session, url, list_key="issues", extra_params=extra_params)
+            self._paginate_post(
+                session,
+                url,
+                body={"jql": f"sprint = {sprint_id} AND issuetype in (Story, Task, Bug)", "fields": fields},
+                list_key="issues",
+            )
         )

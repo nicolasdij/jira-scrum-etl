@@ -98,18 +98,31 @@ combined AS (
 )
 
 SELECT
-    member_name,
-    board,
-    subteam,
-    sprint_id,
-    sprint_name,
-    board_id,
+    c.member_name,
+    c.board,
+    c.subteam,
+    c.sprint_id,
+    c.sprint_name,
+    c.board_id,
     GREATEST(
-        base_days - days_off - holiday_days - days_split_away,
+        COALESCE(
+            -- If Team Splits has an explicit entry for this member's own subteam, use it
+            -- directly (the prepopulator pre-fills it with effective days and the user
+            -- adjusts it to reflect actual planned capacity).
+            (
+                SELECT ts.days_allocated
+                FROM {{ ref('stg_team_splits') }} ts
+                WHERE ts.member_name = c.member_name
+                  AND ts.sprint_id   = c.sprint_id
+                  AND ts.board       = c.board
+                  AND ts.subteam     = c.subteam
+            ),
+            c.base_days - c.days_off - c.holiday_days - c.days_split_away
+        ),
         0.0
     ) AS availability_days,
-    base_days,
-    days_off,
-    holiday_days,
-    days_split_away
-FROM combined
+    c.base_days,
+    c.days_off,
+    c.holiday_days,
+    c.days_split_away
+FROM combined c
