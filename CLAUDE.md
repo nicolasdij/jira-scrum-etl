@@ -68,12 +68,12 @@ Google Sheets (input) ──► Dagster assets ──► DuckDB raw tables
 **`dagster_pipeline/assets/`** — Python extraction and export:
 - `jira.py`: Materializes `raw_jira_sprints` (all sprints from both boards) and `raw_jira_issues` (partitioned by sprint ID for concurrency)
 - `gsheets.py`: Reads input sheet tabs into raw DuckDB tables; writes team split prepopulation
-- `exports.py`: Reads dbt mart tables and writes to output spreadsheet tabs
+- `exports.py`: Reads dbt mart tables and writes to output spreadsheet tabs ("Capacity Plan", "Sprint History", "Member Availability")
 
 **`dbt_project/models/`** — Three-layer transformation:
-- **staging/** — Clean and normalize raw tables (6 `stg_*` views)
+- **staging/** — Clean and normalize raw tables (6 `stg_*` views). `stg_jira_sprints` computes `sprint_working_days` (actual Mon–Fri count, exclusive end_date) via `generate_series`.
 - **intermediate/** — Compute member availability per sprint (deducts holidays, time off, cross-board allocations); compute velocity (4 `int_*` tables)
-- **marts/** — Final outputs: `mart_capacity_planning` (recommended story points), `mart_sprint_history`, `mart_rolling_velocity` (5-sprint rolling average)
+- **marts/** — Final outputs: `mart_capacity_planning` (recommended story points), `mart_sprint_history`, `mart_rolling_velocity` (5-sprint rolling average), `mart_member_availability` (per-member available days excl. splits, active/future sprints only — reference for filling in Team Splits)
 
 **`dbt_project/seeds/`** — Static reference data in CSV: `team_members`, `board_config`, `subteam_labels`, `member_regions`
 
@@ -81,11 +81,11 @@ Google Sheets (input) ──► Dagster assets ──► DuckDB raw tables
 
 **DuckDB concurrency**: `raw_jira_issues` is partitioned by sprint ID, so Dagster materializes many partitions concurrently. DuckDB only allows one writer at a time, so `dagster_home/dagster.yaml` sets `QueuedRunCoordinator` with `max_concurrent_runs: 1` for assets tagged `dagster/concurrency_key: duckdb`. Assets that write to DuckDB must include this tag.
 
-**Sprint partitioning**: The partition set for `raw_jira_issues` is dynamically computed from the Jira API (all known sprint IDs). The hourly partition sensor materializes closed sprints once and refreshes active/future sprints daily.
+**Sprint partitioning**: The partition set for `raw_jira_issues` is dynamically computed from the Jira API (all known sprint IDs). The hourly partition sensor materializes closed sprints once and refreshes active/future sprints daily. The most recently closed sprint per board is also refreshed daily to capture issues resolved after the last active-sprint fetch but before the sprint closed.
 
 **Boards and sub-teams**: Board membership and sub-team groupings are defined in `dbt_project/seeds/board_config.csv` and `subteam_labels.csv`. The DELI board contains DevOps, Backend, and SolArch sub-teams; NFR contains Infra. Adding a new board or sub-team requires updating these seeds.
 
-**Capacity formula**: Base capacity = 10 days/sprint per member, minus public holidays (region-specific), minus time-off days, minus allocation days when a member works across multiple boards.
+**Capacity formula**: Base capacity = actual weekdays in the sprint window (Mon–Fri, end_date exclusive) per member, minus public holidays (region-specific), minus time-off days, minus allocation days when a member works across multiple boards. `int_member_sprint_availability` exposes both `availability_days` (includes team-split override) and `availability_days_excl_splits` (formula only, no override) for use as a reference when entering splits.
 
 ### Schedules (Madrid timezone)
 
