@@ -25,13 +25,15 @@ dbt_project/.user.yml
 # Dagster runtime files (SQLite DBs, logs, intermediate storage).
 # dagster.yaml is tracked; everything Dagster writes at runtime is not.
 .dagster/
-logs/
+.telemetry/
 storage/
-history/
-history/*.db
-history/runs/
-schedules/
-schedules/*.db
+/dagster_home/.logs_queue/
+/dagster_home/logs/
+/dagster_home/history/
+/dagster_home/history/*.db
+/dagster_home/history/runs/
+/dagster_home/schedules/
+/dagster_home/schedules/*.db
 
 # Google credentials
 *.json
@@ -40,3 +42,6 @@ schedules/*.db
 # IDE
 .vscode/
 .idea/
+
+# Mac OS
+.DS_Store
