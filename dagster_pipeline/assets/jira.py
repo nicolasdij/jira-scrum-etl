@@ -214,9 +214,6 @@ def raw_jira_issues(context, jira: JiraResource) -> None:
             _extracted_at   VARCHAR
         )
     """)
-    # Migrate tables created before t_shirt_size was added.
-    con.execute("ALTER TABLE raw.raw_jira_issues ADD COLUMN IF NOT EXISTS t_shirt_size DOUBLE")
-
     sprint_row = con.execute(
         "SELECT sprint_id, board_id, state FROM raw.raw_jira_sprints WHERE sprint_name = ?",
         [sprint_name],
