@@ -65,7 +65,7 @@ def _compute_effective_days(
     region_set = set(regions)
     count = 0
     current = start
-    while current <= end:
+    while current < end:
         if current.weekday() < 5:  # Mon–Fri
             date_str = current.strftime("%Y-%m-%d")
             holiday_regions = holiday_map.get(date_str, set())

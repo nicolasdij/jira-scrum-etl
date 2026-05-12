@@ -4,7 +4,7 @@
 --   2. Public holiday days (from stg_public_holidays via stg_member_regions)
 --   3. Days allocated to OTHER board/subteam combinations (from stg_team_splits)
 --
--- Base capacity per member per sprint = 10 ideal working days.
+-- Base capacity per member per sprint = actual weekdays in the sprint window.
 -- Availability is floored at 0 (cannot go negative).
 
 WITH base AS (
@@ -17,7 +17,8 @@ WITH base AS (
         sp.sprint_id,
         sp.sprint_name,
         sp.board_id,
-        10.0 AS base_days
+        sp.sprint_state,
+        sp.sprint_working_days::DOUBLE AS base_days
     FROM {{ ref('team_members') }} tm
     JOIN {{ ref('stg_jira_sprints') }} sp
         ON tm.board = (
@@ -73,6 +74,7 @@ combined AS (
         b.sprint_id,
         b.sprint_name,
         b.board_id,
+        b.sprint_state,
         b.base_days,
         COALESCE(tod.days_off, 0)           AS days_off,
         COALESCE(hd.holiday_days, 0)        AS holiday_days,
@@ -104,6 +106,7 @@ SELECT
     c.sprint_id,
     c.sprint_name,
     c.board_id,
+    c.sprint_state,
     GREATEST(
         COALESCE(
             -- If Team Splits has an explicit entry for this member's own subteam, use it
@@ -121,6 +124,7 @@ SELECT
         ),
         0.0
     ) AS availability_days,
+    GREATEST(c.base_days - c.days_off - c.holiday_days, 0.0) AS availability_days_excl_splits,
     c.base_days,
     c.days_off,
     c.holiday_days,

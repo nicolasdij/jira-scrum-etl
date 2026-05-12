@@ -18,6 +18,7 @@ from dagster_pipeline.resources.gsheets_resource import GSheetsResource
 
 CAPACITY_PLAN_SHEET = "Capacity Plan"
 SPRINT_HISTORY_SHEET = "Sprint History"
+MEMBER_AVAILABILITY_SHEET = "Member Availability"
 
 
 def _serialize(value: Any) -> Any:
@@ -109,3 +110,41 @@ def gsheets_sprint_history_export(
     context.log.info(f"Writing {len(rows) - 1} sprint history rows to Google Sheets")
     gsheets.overwrite_output_sheet(SPRINT_HISTORY_SHEET, rows)
     context.log.info(f"'{SPRINT_HISTORY_SHEET}' tab updated successfully.")
+
+
+@asset(
+    name="gsheets_member_availability_export",
+    group_name="exports",
+    deps=[AssetKey(["marts", "mart_member_availability"])],
+    description=(
+        "Writes mart_member_availability to the 'Member Availability' tab in the output "
+        "spreadsheet. Shows per-member available days (excl. team splits) for active and "
+        "future sprints — intended as a reference when filling in the Team Splits input sheet."
+    ),
+)
+def gsheets_member_availability_export(
+    context,
+    gsheets: GSheetsResource,
+) -> None:
+    db_path = os.environ.get("DUCKDB_PATH", "data/scrum.duckdb")
+
+    rows = _query_to_rows(
+        db_path,
+        """
+        SELECT
+            sprint_name,
+            member_name,
+            board,
+            subteam,
+            availability_days_excl_splits,
+            base_days,
+            days_off,
+            holiday_days
+        FROM marts.mart_member_availability
+        ORDER BY sprint_name, subteam, member_name
+        """,
+    )
+
+    context.log.info(f"Writing {len(rows) - 1} member availability rows to Google Sheets")
+    gsheets.overwrite_output_sheet(MEMBER_AVAILABILITY_SHEET, rows)
+    context.log.info(f"'{MEMBER_AVAILABILITY_SHEET}' tab updated successfully.")

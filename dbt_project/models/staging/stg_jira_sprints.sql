@@ -27,4 +27,14 @@ cleaned AS (
     WHERE sprint_id IS NOT NULL
 )
 
-SELECT * FROM cleaned
+SELECT
+    c.*,
+    COALESCE(wd.working_days, 10) AS sprint_working_days
+FROM cleaned c
+LEFT JOIN LATERAL (
+    SELECT COUNT(*)::INTEGER AS working_days
+    FROM generate_series(c.start_date::DATE, c.end_date::DATE - INTERVAL '1 day', INTERVAL '1 day') gs(d)
+    WHERE DAYOFWEEK(d) BETWEEN 1 AND 5
+      AND c.start_date IS NOT NULL
+      AND c.end_date IS NOT NULL
+) wd ON TRUE
