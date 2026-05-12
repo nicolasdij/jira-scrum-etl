@@ -22,9 +22,7 @@ dependencies = [
     "gspread>=6.0",
     "google-auth>=2.28",
     # Utilities
-    "python-dotenv>=1.0",
     "pydantic>=2.6",
-    "pendulum>=3.0",
     "dagster-cli>=0.8.1",
     "dagster-dg-cli>=1.13.3",
 ]
