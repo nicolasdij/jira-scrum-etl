@@ -125,6 +125,25 @@ def raw_jira_issues_partition_sensor(context):
                 """
             ).fetchall()
         }
+        # Most recently closed sprint per board — always refreshed daily so that
+        # issues resolved after the last active-sprint fetch but before close are captured.
+        last_closed_per_board = {
+            row[0]
+            for row in con.execute(
+                """
+                SELECT sprint_name FROM (
+                    SELECT sprint_name,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY board_id
+                               ORDER BY complete_date DESC NULLS LAST
+                           ) AS rn
+                    FROM raw.raw_jira_sprints
+                    WHERE state = 'closed'
+                ) ranked
+                WHERE rn = 1
+                """
+            ).fetchall()
+        }
         con.close()
     except Exception:
         yield SkipReason("DuckDB not yet initialised; skipping.")
@@ -135,13 +154,19 @@ def raw_jira_issues_partition_sensor(context):
     for partition_key in all_partitions:
         state = sprint_states.get(partition_key, "unknown")
         if state == "closed":
-            if partition_key not in loaded_sprint_names:
-                # First-time load for this closed sprint.
+            if partition_key in last_closed_per_board:
+                # Re-fetch daily: may still have unresolved issues from the final day.
+                run_requests.append(RunRequest(
+                    run_key=f"sprint_{partition_key}_{today}",
+                    partition_key=partition_key,
+                ))
+            elif partition_key not in loaded_sprint_names:
+                # First-time load for an older closed sprint.
                 run_requests.append(RunRequest(
                     run_key=f"sprint_{partition_key}_closed_initial",
                     partition_key=partition_key,
                 ))
-            # Already loaded closed sprint: asset guards internally, nothing to do.
+            # Older closed sprint already loaded: skip.
         else:
             # Active/future sprints: refresh once per day.
             run_requests.append(RunRequest(

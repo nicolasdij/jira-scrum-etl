@@ -226,19 +226,36 @@ def raw_jira_issues(context, jira: JiraResource) -> None:
 
     sprint_id, board_id, state = sprint_row
 
-    # Closed sprints are immutable — skip the Jira fetch if we already have their issues.
+    # Closed sprints are immutable — skip the Jira fetch if we already have their issues,
+    # UNLESS this is the most recently closed sprint for its board. That sprint may still
+    # have issues resolved after the last materialisation but before the sprint closed.
     if state == "closed":
         existing_row = con.execute(
             "SELECT COUNT(*) FROM raw.raw_jira_issues WHERE sprint_id = ?", [sprint_id]
         ).fetchone()
         existing = existing_row[0] if existing_row is not None else 0
         if existing > 0:
+            last_closed_row = con.execute(
+                """
+                SELECT sprint_name FROM raw.raw_jira_sprints
+                WHERE board_id = ? AND state = 'closed'
+                ORDER BY complete_date DESC NULLS LAST
+                LIMIT 1
+                """,
+                [board_id],
+            ).fetchone()
+            is_last_closed = last_closed_row is not None and last_closed_row[0] == sprint_name
+            if not is_last_closed:
+                context.log.info(
+                    f"Sprint {sprint_id} ({sprint_name}) is closed and already has "
+                    f"{existing} issues in DuckDB — skipping fetch."
+                )
+                con.close()
+                return
             context.log.info(
-                f"Sprint {sprint_id} ({sprint_name}) is closed and already has "
-                f"{existing} issues in DuckDB — skipping fetch."
+                f"Sprint {sprint_id} ({sprint_name}) is the last closed sprint for board "
+                f"{board_id} — re-fetching to capture any late resolutions."
             )
-            con.close()
-            return
 
     con.close()
 
