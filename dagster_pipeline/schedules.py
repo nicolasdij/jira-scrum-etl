@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
+
 from dagster import (
     AssetKey,
     AssetSelection,
@@ -12,6 +14,13 @@ from dagster import (
     define_asset_job,
     sensor,
 )
+
+_STATE_RANK = {"active": 0, "future": 1, "closed": 2}
+
+
+def _effective_state(states: list[str]) -> str:
+    """Return the most permissive state from a list: active > future > closed."""
+    return min(states, key=lambda s: _STATE_RANK.get(s, 99))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Jobs
@@ -89,61 +98,76 @@ team_splits_monday_schedule = ScheduleDefinition(
     job=raw_jira_issues_job,
     minimum_interval_seconds=3600,
     description=(
-        "Triggers raw_jira_issues materialisation for each sprint partition: "
-        "once for closed sprints (skipped internally if already loaded), "
-        "and daily for active/future sprints to keep issue states fresh."
+        "Triggers raw_jira_issues materialisation for each sprint-date partition. "
+        "One partition covers all boards (DELI + NFR) starting on that date. "
+        "Active/future dates refresh daily; the last-closed date per board refreshes "
+        "daily to capture late resolutions; older closed dates load once."
     ),
 )
 def raw_jira_issues_partition_sensor(context):
-    """Dispatch a raw_jira_issues run for every sprint partition that needs updating."""
+    """Dispatch raw_jira_issues runs for every sprint-date partition that needs updating."""
     import duckdb
     import os
     from datetime import date
 
     db_path = os.environ.get("DUCKDB_PATH", "data/scrum.duckdb")
 
-    all_partitions = context.instance.get_dynamic_partitions("sprints")
+    all_partitions = context.instance.get_dynamic_partitions("sprint_dates")
     if not all_partitions:
-        yield SkipReason("No sprint partitions registered yet; run raw_jira_sprints first.")
+        yield SkipReason("No sprint date partitions registered yet; run raw_jira_sprints first.")
         return
 
     try:
         con = duckdb.connect(db_path, read_only=True)
-        sprint_states = {
-            row[0]: row[1]
-            for row in con.execute(
-                "SELECT sprint_name, state FROM raw.raw_jira_sprints"
-            ).fetchall()
+
+        # Effective state per date: active > future > closed across all boards.
+        date_states_map: dict[str, list[str]] = defaultdict(list)
+        for sd, state in con.execute(
+            "SELECT SUBSTR(start_date, 1, 10), state FROM raw.raw_jira_sprints WHERE start_date IS NOT NULL"
+        ).fetchall():
+            date_states_map[sd].append(state)
+        effective_states = {
+            sd: _effective_state(states) for sd, states in date_states_map.items()
         }
-        loaded_sprint_names = {
+
+        # For fully-loaded check: all sprint_ids for a date must have rows in raw_jira_issues.
+        date_to_sprint_ids: dict[str, set[int]] = defaultdict(set)
+        for sd, sid in con.execute(
+            "SELECT SUBSTR(start_date, 1, 10), sprint_id FROM raw.raw_jira_sprints WHERE start_date IS NOT NULL"
+        ).fetchall():
+            date_to_sprint_ids[sd].add(sid)
+
+        loaded_sprint_ids: set[int] = {
+            row[0]
+            for row in con.execute("SELECT DISTINCT sprint_id FROM raw.raw_jira_issues").fetchall()
+        }
+        fully_loaded_dates: set[str] = {
+            sd for sd, sids in date_to_sprint_ids.items() if sids.issubset(loaded_sprint_ids)
+        }
+
+        # Start dates of the most recently closed sprint per board — refreshed daily.
+        last_closed_dates: set[str] = {
             row[0]
             for row in con.execute(
                 """
-                SELECT DISTINCT rs.sprint_name
-                FROM raw.raw_jira_issues ri
-                JOIN raw.raw_jira_sprints rs ON ri.sprint_id = rs.sprint_id
+                SELECT DISTINCT SUBSTR(start_date, 1, 10)
+                FROM raw.raw_jira_sprints
+                WHERE sprint_id IN (
+                    SELECT sprint_id FROM (
+                        SELECT sprint_id,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY board_id
+                                   ORDER BY complete_date DESC NULLS LAST
+                               ) AS rn
+                        FROM raw.raw_jira_sprints
+                        WHERE state = 'closed'
+                    ) ranked
+                    WHERE rn = 1
+                ) AND start_date IS NOT NULL
                 """
             ).fetchall()
         }
-        # Most recently closed sprint per board — always refreshed daily so that
-        # issues resolved after the last active-sprint fetch but before close are captured.
-        last_closed_per_board = {
-            row[0]
-            for row in con.execute(
-                """
-                SELECT sprint_name FROM (
-                    SELECT sprint_name,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY board_id
-                               ORDER BY complete_date DESC NULLS LAST
-                           ) AS rn
-                    FROM raw.raw_jira_sprints
-                    WHERE state = 'closed'
-                ) ranked
-                WHERE rn = 1
-                """
-            ).fetchall()
-        }
+
         con.close()
     except Exception:
         yield SkipReason("DuckDB not yet initialised; skipping.")
@@ -152,32 +176,32 @@ def raw_jira_issues_partition_sensor(context):
     today = date.today().isoformat()
     run_requests = []
     for partition_key in all_partitions:
-        state = sprint_states.get(partition_key, "unknown")
+        state = effective_states.get(partition_key, "unknown")
         if state == "closed":
-            if partition_key in last_closed_per_board:
+            if partition_key in last_closed_dates:
                 # Re-fetch daily: may still have unresolved issues from the final day.
                 run_requests.append(RunRequest(
-                    run_key=f"sprint_{partition_key}_{today}",
+                    run_key=f"sprint_date_{partition_key}_{today}",
                     partition_key=partition_key,
                 ))
-            elif partition_key not in loaded_sprint_names:
-                # First-time load for an older closed sprint.
+            elif partition_key not in fully_loaded_dates:
+                # First-time load for an older closed sprint cycle.
                 run_requests.append(RunRequest(
-                    run_key=f"sprint_{partition_key}_closed_initial",
+                    run_key=f"sprint_date_{partition_key}_closed_initial",
                     partition_key=partition_key,
                 ))
-            # Older closed sprint already loaded: skip.
+            # Older closed date fully loaded: no RunRequest.
         else:
-            # Active/future sprints: refresh once per day.
+            # Active/future: refresh once per day.
             run_requests.append(RunRequest(
-                run_key=f"sprint_{partition_key}_{today}",
+                run_key=f"sprint_date_{partition_key}_{today}",
                 partition_key=partition_key,
             ))
 
     if run_requests:
         yield from run_requests
     else:
-        yield SkipReason("All sprint partitions are up to date.")
+        yield SkipReason("All sprint date partitions are up to date.")
 
 
 @sensor(
