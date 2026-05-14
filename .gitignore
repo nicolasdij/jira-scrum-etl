@@ -26,6 +26,7 @@ dbt_project/.user.yml
 # dagster.yaml is tracked; everything Dagster writes at runtime is not.
 .dagster/
 .telemetry/
+logs/
 storage/
 /dagster_home/.logs_queue/
 /dagster_home/logs/
