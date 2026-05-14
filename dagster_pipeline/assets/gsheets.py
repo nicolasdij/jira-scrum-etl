@@ -187,12 +187,13 @@ def raw_team_splits(context, gsheets: GSheetsResource) -> None:
     con = _db()
     con.execute("""
         CREATE OR REPLACE TABLE raw.raw_team_splits (
-            sprint_name     VARCHAR,
-            member_name     VARCHAR,
-            board           VARCHAR,
-            subteam         VARCHAR,
-            days_allocated  DOUBLE,
-            _extracted_at   VARCHAR
+            sprint_name       VARCHAR,
+            sprint_start_date VARCHAR,
+            member_name       VARCHAR,
+            board             VARCHAR,
+            subteam           VARCHAR,
+            days_allocated    DOUBLE,
+            _extracted_at     VARCHAR
         )
     """)
     now = datetime.utcnow().isoformat()
@@ -208,10 +209,10 @@ def raw_team_splits(context, gsheets: GSheetsResource) -> None:
             except (TypeError, ValueError):
                 days = None
         rows.append([
-            r.get("sprint_name"), r.get("member_name"), r.get("board"),
-            r.get("subteam"), days, now,
+            r.get("sprint_name"), r.get("sprint_start_date"), r.get("member_name"),
+            r.get("board"), r.get("subteam"), days, now,
         ])
-    con.executemany("INSERT INTO raw.raw_team_splits VALUES (?, ?, ?, ?, ?, ?)", rows)
+    con.executemany("INSERT INTO raw.raw_team_splits VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
     context.log.info("Loaded raw_team_splits into DuckDB")
     con.close()
 
@@ -348,19 +349,20 @@ def gsheets_team_splits_prepopulator(
         gsheets.overwrite_sheet(
             gsheets.input_spreadsheet_id,
             SHEET_TEAM_SPLITS,
-            [["sprint_name", "member_name", "board", "subteam", "days_allocated"]],
+            [["sprint_name", "sprint_start_date", "member_name", "board", "subteam", "days_allocated"]],
         )
 
     new_rows: list[list] = []
     for sprint_name, board_id in future_sprints:
         board_key = board_map.get(board_id, str(board_id))
+        start_date = (sprint_dates.get(sprint_name) or ("", ""))[0][:10]
         for member_name, member_board, subteam in members:
             if member_board != board_key:
                 continue
             key = (sprint_name, member_name, board_key, subteam)
             if key not in existing_keys:
                 days_allocated = effective_days_cache.get((sprint_name, member_name), "")
-                new_rows.append([sprint_name, member_name, board_key, subteam, days_allocated])
+                new_rows.append([sprint_name, start_date, member_name, board_key, subteam, days_allocated])
                 existing_keys.add(key)
 
     if new_rows:
