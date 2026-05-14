@@ -96,6 +96,10 @@ Google Sheets (input) ──► Dagster assets ──► DuckDB raw tables
 | Hourly sensor | Materialize `raw_jira_issues` partitions |
 | Hourly sensor | Trigger full pipeline on sprint close |
 
+## One-Time / Maintenance Scripts
+
+**`scripts/backfill_team_splits_start_date.py`** — Populates the `sprint_start_date` column in the Team Splits Google Sheet tab for rows where it is blank, using the corresponding `start_date` from `raw.raw_jira_sprints` in DuckDB. Run with `uv run python scripts/backfill_team_splits_start_date.py`. Safe to re-run: rows that already have a value are skipped.
+
 ## Linting Configuration
 
 Ruff is configured in `pyproject.toml`: line length 100, Python 3.11 target. Run `ruff check .` from the repo root.
