@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Any
 
 import duckdb
-from dagster import AssetKey, DynamicPartitionsDefinition, asset
+from dagster import AssetKey, DynamicPartitionsDefinition, MaterializeResult, MetadataValue, asset
 from dagster_pipeline.resources.jira_resource import JiraResource
 
 sprint_partitions = DynamicPartitionsDefinition(name="sprint_dates")
@@ -187,7 +187,7 @@ def raw_jira_sprints(context, jira: JiraResource) -> None:
         "when rows already exist unless it is that board's last closed sprint."
     ),
 )
-def raw_jira_issues(context, jira: JiraResource) -> None:
+def raw_jira_issues(context, jira: JiraResource) -> MaterializeResult | None:
     import os
     if not context.has_partition_key:
         context.log.error(
@@ -366,3 +366,13 @@ def raw_jira_issues(context, jira: JiraResource) -> None:
         f"(sprint_ids: {fetched_sprint_ids}) into raw.raw_jira_issues"
     )
     con.close()
+    return MaterializeResult(
+        metadata={
+            "issue_keys": MetadataValue.json(
+                sorted({r["issue_key"] for r in all_rows if r["issue_key"]})
+            ),
+            "num_issues": MetadataValue.int(len(all_rows)),
+            "sprint_ids": MetadataValue.json(fetched_sprint_ids),
+            "boards": MetadataValue.json(sorted({r["board_id"] for r in all_rows})),
+        }
+    )
