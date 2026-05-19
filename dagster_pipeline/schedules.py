@@ -61,6 +61,22 @@ team_splits_prepopulate_job = define_asset_job(
     description="Insert skeleton rows into the Team Splits sheet for future sprints.",
 )
 
+# Refresh Sprint Plan tab after editing the Sprint Planning input sheet.
+# Runs: raw_sprint_planning → stg_sprint_planning → mart_sprint_plan → gsheets_sprint_plan_export
+sprint_plan_update_job = define_asset_job(
+    name="sprint_plan_update_job",
+    selection=AssetSelection.assets(
+        AssetKey(["raw", "raw_sprint_planning"]),
+        AssetKey(["staging", "stg_sprint_planning"]),
+        AssetKey(["marts", "mart_sprint_plan"]),
+        "gsheets_sprint_plan_export",
+    ),
+    description=(
+        "Re-reads the Sprint Planning input sheet and rebuilds the Sprint Plan output tab. "
+        "Run this after editing planned_points or include values in the Sprint Planning sheet."
+    ),
+)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Schedules
 # ─────────────────────────────────────────────────────────────────────────────

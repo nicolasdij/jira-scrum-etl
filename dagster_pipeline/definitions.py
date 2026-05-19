@@ -26,6 +26,7 @@ from dagster_pipeline.schedules import (
     full_pipeline_job,
     extraction_only_job,
     team_splits_prepopulate_job,
+    sprint_plan_update_job,
 )
 
 import pathlib
@@ -98,7 +99,7 @@ resources = {
 defs = Definitions(
     assets=[*_python_assets, *_dbt_asset_list],
     resources=resources,
-    jobs=[full_pipeline_job, extraction_only_job, team_splits_prepopulate_job, raw_jira_issues_job],
+    jobs=[full_pipeline_job, extraction_only_job, team_splits_prepopulate_job, raw_jira_issues_job, sprint_plan_update_job],
     schedules=[weekly_tuesday_schedule, team_splits_monday_schedule],
     sensors=[jira_sprint_closed_sensor, raw_jira_issues_partition_sensor],
 )
