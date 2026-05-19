@@ -95,11 +95,9 @@ def gsheets_sprint_history_export(
             sprint_start_date,
             burnt_points,
             ROUND(capacity_pct * 100, 0) || '%' AS capacity_pct,
-            subteam_size,
             total_available_days,
             weighted_velocity,
-            rolling_avg_velocity,
-            sprints_in_window
+            FLOOR(rolling_avg_velocity) as rolling_avg_velocity
         FROM marts.mart_sprint_history
         ORDER BY sprint_start_date, sprint_name, subteam
         """,
