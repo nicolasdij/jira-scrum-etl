@@ -94,7 +94,7 @@ def gsheets_sprint_history_export(
         SELECT
             sprint_name,
             subteam,
-            strftime(sprint_start_date, '%Y-%m-%d') AS sprint_start_date,
+            sprint_start_date,
             burnt_points,
             ROUND(capacity_pct * 100, 0) || '%' AS capacity_pct,
             subteam_size,
@@ -133,6 +133,7 @@ def gsheets_member_availability_export(
         """
         SELECT
             sprint_name,
+            sprint_start_date,
             member_name,
             board,
             subteam,

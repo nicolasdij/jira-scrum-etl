@@ -40,7 +40,7 @@ SELECT
     v.sprint_name,
     v.board_id,
     v.subteam,
-    cast(v.sprint_start_date as date) as sprint_start_date,
+    strftime(v.sprint_start_date::DATE, '%Y-%m-%d') AS sprint_start_date,
     b.burnt_points,
     c.capacity_pct,
     c.subteam_size,

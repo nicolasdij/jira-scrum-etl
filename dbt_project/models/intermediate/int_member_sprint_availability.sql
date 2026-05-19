@@ -16,6 +16,7 @@ WITH base AS (
         tm.subteam,
         sp.sprint_id,
         sp.sprint_name,
+        sp.start_date::DATE             AS sprint_start_date,
         sp.board_id,
         sp.sprint_state,
         sp.sprint_working_days::DOUBLE AS base_days
@@ -73,6 +74,7 @@ combined AS (
         b.subteam,
         b.sprint_id,
         b.sprint_name,
+        b.sprint_start_date,
         b.board_id,
         b.sprint_state,
         b.base_days,
@@ -105,6 +107,7 @@ SELECT
     c.subteam,
     c.sprint_id,
     c.sprint_name,
+    c.sprint_start_date,
     c.board_id,
     c.sprint_state,
     GREATEST(

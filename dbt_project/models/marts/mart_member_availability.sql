@@ -5,6 +5,7 @@
 
 SELECT
     a.sprint_name,
+    strftime(a.sprint_start_date, '%Y-%m-%d') AS sprint_start_date,
     a.member_name,
     a.board,
     a.subteam,
