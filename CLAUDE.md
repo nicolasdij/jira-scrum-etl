@@ -66,14 +66,14 @@ Google Sheets (input) ──► Dagster assets ──► DuckDB raw tables
 ### Layer Breakdown
 
 **`dagster_pipeline/assets/`** — Python extraction and export:
-- `jira.py`: Materializes `raw_jira_sprints` (all sprints from both boards) and `raw_jira_issues` (partitioned by sprint ID for concurrency)
-- `gsheets.py`: Reads input sheet tabs into raw DuckDB tables; writes team split prepopulation
-- `exports.py`: Reads dbt mart tables and writes to output spreadsheet tabs ("Capacity Plan", "Sprint History", "Member Availability")
+- `jira.py`: Materializes `raw_jira_sprints` (all sprints from both boards) and `raw_jira_issues` (partitioned by sprint ID for concurrency). Captures exact Jira status name (`status`) alongside `status_category`.
+- `gsheets.py`: Reads input sheet tabs into raw DuckDB tables; writes team split prepopulation; pre-populates Sprint Planning sheet for upcoming sprints.
+- `exports.py`: Reads dbt mart tables and writes to output spreadsheet tabs ("Capacity Plan", "Sprint History", "Member Availability", "Sprint Plan")
 
 **`dbt_project/models/`** — Three-layer transformation:
-- **staging/** — Clean and normalize raw tables (6 `stg_*` views). `stg_jira_sprints` computes `sprint_working_days` (actual Mon–Fri count, exclusive end_date) via `generate_series`.
-- **intermediate/** — Compute member availability per sprint (deducts holidays, time off, cross-board allocations); compute velocity (4 `int_*` tables)
-- **marts/** — Final outputs: `mart_capacity_planning` (recommended story points), `mart_sprint_history`, `mart_rolling_velocity` (5-sprint rolling average), `mart_member_availability` (per-member available days excl. splits, active/future sprints only — reference for filling in Team Splits)
+- **staging/** — Clean and normalize raw tables. `stg_jira_sprints` computes `sprint_working_days` (actual Mon–Fri count, exclusive end_date). `stg_sprint_planning` cleans the Sprint Planning input sheet (casts `planned_points`, normalises `include` to BOOLEAN, excludes cancelled issues).
+- **intermediate/** — Compute member availability per sprint (deducts holidays, time off, cross-board allocations); compute velocity (4 `int_*` tables). `int_member_sprint_availability` exposes `sprint_start_date` for downstream marts.
+- **marts/** — Final outputs: `mart_capacity_planning` (recommended story points), `mart_sprint_history`, `mart_rolling_velocity` (5-sprint rolling average), `mart_member_availability` (per-member available days excl. splits, active/future sprints only), `mart_sprint_plan` (planned points vs subteam capacity for the next sprint)
 
 **`dbt_project/seeds/`** — Static reference data in CSV: `team_members`, `board_config`, `subteam_labels`, `member_regions`
 
@@ -85,16 +85,19 @@ Google Sheets (input) ──► Dagster assets ──► DuckDB raw tables
 
 **Boards and sub-teams**: Board membership and sub-team groupings are defined in `dbt_project/seeds/board_config.csv` and `subteam_labels.csv`. The DELI board contains DevOps, Backend, and SolArch sub-teams; NFR contains Infra. Adding a new board or sub-team requires updating these seeds.
 
-**Capacity formula**: Base capacity = actual weekdays in the sprint window (Mon–Fri, end_date exclusive) per member, minus public holidays (region-specific), minus time-off days, minus allocation days when a member works across multiple boards. `int_member_sprint_availability` exposes both `availability_days` (includes team-split override) and `availability_days_excl_splits` (formula only, no override) for use as a reference when entering splits.
+**Capacity formula**: Base capacity = actual weekdays in the sprint window (Mon–Fri, end_date exclusive) per member, minus public holidays (region-specific), minus time-off days, minus allocation days when a member works across multiple boards. `int_member_sprint_availability` exposes both `availability_days` (includes team-split override) and `availability_days_excl_splits` (formula only, no override) for use as a reference when entering splits. A `days_allocated = 0` entry in Team Splits is a valid override meaning the member is fully unavailable for that sprint.
 
-### Schedules (Madrid timezone)
+**Sprint planning workflow**: Before committing changes in Jira, use the Sprint Planning input sheet to plan the next sprint. The `gsheets_sprint_planning_prepopulator` fills in one row per issue currently assigned to the first future sprint per board (`status_category = 'cancelled'` issues excluded). `planned_points` is pre-filled from `COALESCE(story_points, t_shirt_size)`; `subteam` is derived from issue labels via `subteam_labels` seed. The `issue_key` column contains a `=HYPERLINK()` formula linking directly to the Jira issue. Edit `planned_points` and `include` (TRUE/FALSE) as needed, then run `sprint_plan_update_job` to refresh the Sprint Plan output tab. The Sprint Plan tab shows `planned_points` vs `subteam_capacity` (= `recommended_capacity_points` from `mart_capacity_planning`) per subteam.
 
-| Schedule | What It Does |
+### Schedules and Jobs (Madrid timezone)
+
+| Schedule / Job | What It Does |
 |---|---|
-| Tuesday 08:00 | Full pipeline: extract → dbt → export |
-| Monday 06:00 | Pre-populate Team Splits sheet for upcoming sprints |
+| Tuesday 08:00 (schedule) | Full pipeline: extract → dbt → export |
+| Monday 06:00 (schedule) | Pre-populate Team Splits sheet for upcoming sprints |
 | Hourly sensor | Materialize `raw_jira_issues` partitions |
 | Hourly sensor | Trigger full pipeline on sprint close |
+| `sprint_plan_update_job` (on-demand) | Re-reads Sprint Planning sheet → rebuilds `mart_sprint_plan` → updates Sprint Plan tab |
 
 ## One-Time / Maintenance Scripts
 
