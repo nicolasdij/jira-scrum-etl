@@ -66,7 +66,7 @@ def gsheets_capacity_plan_export(
             total_available_days,
             last_closed_sprint_name
         FROM marts.mart_capacity_planning
-        ORDER BY subteam
+        ORDER BY target_sprint, subteam
         """,
     )
 
@@ -104,7 +104,7 @@ def gsheets_sprint_history_export(
             rolling_avg_velocity,
             sprints_in_window
         FROM marts.mart_sprint_history
-        ORDER BY sprint_start_date, subteam
+        ORDER BY sprint_start_date, sprint_name, subteam
         """,
     )
 
@@ -143,7 +143,7 @@ def gsheets_member_availability_export(
             days_off,
             holiday_days
         FROM marts.mart_member_availability
-        ORDER BY sprint_name, subteam, member_name
+        ORDER BY sprint_start_date, sprint_name, subteam, member_name
         """,
     )
 
@@ -182,7 +182,7 @@ def gsheets_sprint_plan_export(
             total_available_days,
             ideal_days
         FROM marts.mart_sprint_plan
-        ORDER BY board, subteam
+        ORDER BY sprint_name, subteam
         """,
     )
 
