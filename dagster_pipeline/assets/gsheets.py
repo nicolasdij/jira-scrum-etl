@@ -498,6 +498,7 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
             [["issue_key", "sprint_name", "board", "subteam", "summary", "status", "planned_points", "include"]],
         )
 
+    jira_base_url = os.environ.get("JIRA_BASE_URL", "").rstrip("/")
     new_rows: list[list] = []
     for board_id, sprint_name, issue_key, summary, story_points, t_shirt_size, status, labels in all_issues:
         if (issue_key, sprint_name) in existing_keys:
@@ -505,8 +506,9 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
         board_key = board_map.get(board_id, str(board_id))
         subteam = _derive_subteam(labels, board_key) or ""
         planned_points = story_points if story_points is not None else t_shirt_size
+        issue_link = f'=HYPERLINK("{jira_base_url}/browse/{issue_key}", "{issue_key}")'
         new_rows.append([
-            issue_key, sprint_name, board_key, subteam, summary or "",
+            issue_link, sprint_name, board_key, subteam, summary or "",
             status or "", planned_points if planned_points is not None else "", "TRUE",
         ])
         existing_keys.add((issue_key, sprint_name))
