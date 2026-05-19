@@ -11,6 +11,7 @@ into the raw_team_splits Google Sheet tab for upcoming (future) sprints.
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import date, datetime, timedelta
 from typing import Optional
@@ -26,6 +27,9 @@ from dagster_pipeline.resources.gsheets_resource import GSheetsResource
 SHEET_TIME_OFF = "Time Off"
 SHEET_HOLIDAYS = "Public Holidays"
 SHEET_TEAM_SPLITS = "Team Splits"
+SHEET_SPRINT_PLANNING = "Sprint Planning"
+
+_BOARD_IDS = [74, 212]  # DELI=74, NFR=212
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -372,3 +376,190 @@ def gsheets_team_splits_prepopulator(
         gsheets.append_rows_to_input_sheet(SHEET_TEAM_SPLITS, new_rows)
     else:
         context.log.info("All future sprint/member/board combinations already present in sheet.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Asset: gsheets_sprint_planning_prepopulator
+# ─────────────────────────────────────────────────────────────────────────────
+
+@asset(
+    name="gsheets_sprint_planning_prepopulator",
+    group_name="raw_gsheets",
+    deps=[
+        AssetKey(["raw", "raw_jira_issues"]),
+        AssetKey(["raw", "raw_jira_sprints"]),
+    ],
+    description=(
+        "Inserts skeleton rows into the Sprint Planning sheet for the immediately following "
+        "sprint per board (first future sprint by start date). "
+        "Only adds rows not already present — existing edits are never overwritten. "
+        "planned_points is pre-filled from story_points (customfield_10105), falling back "
+        "to t_shirt_size (customfield_10834). subteam is derived from issue labels via "
+        "subteam_labels, with board default_subteam as fallback."
+    ),
+)
+def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> None:
+    db_path = os.environ.get("DUCKDB_PATH", "data/scrum.duckdb")
+    con = _db(db_path)
+
+    # Per board: find the first future sprint (earliest start_date)
+    target_sprints: dict[int, tuple] = {}
+    for board_id in _BOARD_IDS:
+        row = con.execute(
+            """
+            SELECT sprint_id, sprint_name, start_date
+            FROM raw.raw_jira_sprints
+            WHERE board_id = ? AND state = 'future' AND start_date IS NOT NULL
+            ORDER BY start_date ASC
+            LIMIT 1
+            """,
+            [board_id],
+        ).fetchone()
+        if row:
+            target_sprints[board_id] = row  # (sprint_id, sprint_name, start_date)
+
+    if not target_sprints:
+        context.log.info("No future sprints found; nothing to pre-populate.")
+        con.close()
+        return
+
+    # board_id → board_key
+    try:
+        board_map: dict[int, str] = {
+            row[0]: row[1]
+            for row in con.execute("SELECT board_id, board_key FROM raw.board_config").fetchall()
+        }
+    except Exception:
+        board_map = {74: "DELI", 212: "NFR"}
+
+    # label → subteam (first label match wins, consistent with stg_jira_issues)
+    try:
+        subteam_label_map: dict[str, str] = {
+            row[0]: row[1]
+            for row in con.execute("SELECT label, subteam FROM raw.subteam_labels").fetchall()
+        }
+    except Exception:
+        import csv, pathlib
+        seed_path = pathlib.Path(__file__).parents[2] / "dbt_project" / "seeds" / "subteam_labels.csv"
+        with open(seed_path) as f:
+            subteam_label_map = {r["label"]: r["subteam"] for r in csv.DictReader(f)}
+
+    # board_key → default subteam fallback
+    try:
+        default_subteam_map: dict[str, str] = {
+            row[0]: row[1]
+            for row in con.execute(
+                "SELECT board_key, default_subteam FROM raw.board_config "
+                "WHERE default_subteam IS NOT NULL AND default_subteam != ''"
+            ).fetchall()
+        }
+    except Exception:
+        default_subteam_map = {"NFR": "Infra"}
+
+    # Fetch issues for each target sprint
+    all_issues: list[tuple] = []
+    for board_id, (sprint_id, sprint_name, _) in target_sprints.items():
+        rows = con.execute(
+            """
+            SELECT issue_key, summary, story_points, t_shirt_size, status, labels
+            FROM raw.raw_jira_issues
+            WHERE sprint_id = ? AND board_id = ?
+            """,
+            [sprint_id, board_id],
+        ).fetchall()
+        for row in rows:
+            all_issues.append((board_id, sprint_name) + row)
+
+    con.close()
+
+    if not all_issues:
+        context.log.info("No issues found for target sprints; nothing to pre-populate.")
+        return
+
+    def _derive_subteam(labels_json: str | None, board_key: str) -> str | None:
+        if labels_json:
+            try:
+                for label in json.loads(labels_json):
+                    if label in subteam_label_map:
+                        return subteam_label_map[label]
+            except Exception:
+                pass
+        return default_subteam_map.get(board_key)
+
+    # Read existing rows to avoid duplicates
+    existing = gsheets.read_input_sheet(SHEET_SPRINT_PLANNING)
+    existing_keys: set[tuple] = {
+        (r.get("issue_key"), r.get("sprint_name"))
+        for r in existing
+    }
+
+    if not existing:
+        gsheets.overwrite_sheet(
+            gsheets.input_spreadsheet_id,
+            SHEET_SPRINT_PLANNING,
+            [["issue_key", "sprint_name", "board", "subteam", "summary", "status", "planned_points", "include"]],
+        )
+
+    new_rows: list[list] = []
+    for board_id, sprint_name, issue_key, summary, story_points, t_shirt_size, status, labels in all_issues:
+        if (issue_key, sprint_name) in existing_keys:
+            continue
+        board_key = board_map.get(board_id, str(board_id))
+        subteam = _derive_subteam(labels, board_key) or ""
+        planned_points = story_points if story_points is not None else t_shirt_size
+        new_rows.append([
+            issue_key, sprint_name, board_key, subteam, summary or "",
+            status or "", planned_points if planned_points is not None else "", "TRUE",
+        ])
+        existing_keys.add((issue_key, sprint_name))
+
+    if new_rows:
+        context.log.info(f"Appending {len(new_rows)} issue rows to '{SHEET_SPRINT_PLANNING}'")
+        gsheets.append_rows_to_input_sheet(SHEET_SPRINT_PLANNING, new_rows)
+    else:
+        context.log.info("All issues for target sprints already present in sheet.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Asset: raw_sprint_planning
+# ─────────────────────────────────────────────────────────────────────────────
+
+@asset(
+    name="raw_sprint_planning",
+    key_prefix=["raw"],
+    group_name="raw_gsheets",
+    deps=["gsheets_sprint_planning_prepopulator"],
+    description="Per-sprint issue planning data read from the Sprint Planning Google Sheet tab.",
+)
+def raw_sprint_planning(context, gsheets: GSheetsResource) -> None:
+    records = gsheets.read_input_sheet(SHEET_SPRINT_PLANNING)
+    context.log.info(f"Read {len(records)} sprint planning records")
+
+    con = _db()
+    con.execute("""
+        CREATE OR REPLACE TABLE raw.raw_sprint_planning (
+            issue_key      VARCHAR,
+            sprint_name    VARCHAR,
+            board          VARCHAR,
+            subteam        VARCHAR,
+            summary        VARCHAR,
+            status         VARCHAR,
+            planned_points VARCHAR,
+            include        VARCHAR,
+            _extracted_at  VARCHAR
+        )
+    """)
+    now = datetime.utcnow().isoformat()
+    con.executemany(
+        "INSERT INTO raw.raw_sprint_planning VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            [
+                r.get("issue_key"), r.get("sprint_name"), r.get("board"), r.get("subteam"),
+                r.get("summary"), r.get("status"), r.get("planned_points"),
+                r.get("include"), now,
+            ]
+            for r in records
+        ],
+    )
+    context.log.info("Loaded raw_sprint_planning into DuckDB")
+    con.close()

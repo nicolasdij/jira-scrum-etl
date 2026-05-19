@@ -212,6 +212,7 @@ def raw_jira_issues(context, jira: JiraResource) -> MaterializeResult | None:
             story_points    DOUBLE,
             t_shirt_size    DOUBLE,
             status_category VARCHAR,
+            status          VARCHAR,
             labels          VARCHAR,
             assignee        VARCHAR,
             cf_sprint_id    VARCHAR,
@@ -220,6 +221,7 @@ def raw_jira_issues(context, jira: JiraResource) -> MaterializeResult | None:
             _extracted_at   VARCHAR
         )
     """)
+    con.execute("ALTER TABLE raw.raw_jira_issues ADD COLUMN IF NOT EXISTS status VARCHAR")
 
     # All board-sprints starting on this date (standard case: one row per board).
     sprint_rows = con.execute(
@@ -293,12 +295,13 @@ def raw_jira_issues(context, jira: JiraResource) -> MaterializeResult | None:
             story_points = fields.get("customfield_10105")
             t_shirt_size = fields.get("customfield_10834")
             status_obj = fields.get("status") or {}
+            status_name = status_obj.get("name")
             status_category = (
                 (status_obj.get("statusCategory") or {}).get("key") or ""
             ).lower()
             # Jira maps "Cancelled" to statusCategory "done", but cancelled issues must not
             # count toward velocity or burndown — override to a distinct value.
-            if (status_obj.get("name") or "").lower() == "cancelled":
+            if (status_name or "").lower() == "cancelled":
                 status_category = "cancelled"
             labels = fields.get("labels") or []
             sprint_ref = _resolve_sprint_from_field(fields.get("customfield_10103"))
@@ -314,6 +317,7 @@ def raw_jira_issues(context, jira: JiraResource) -> MaterializeResult | None:
                 "story_points": story_points,
                 "t_shirt_size": t_shirt_size,
                 "status_category": status_category,
+                "status": status_name,
                 "labels": json.dumps(labels),
                 "assignee": assignee_obj.get("displayName"),
                 "cf_sprint_id": sprint_ref["id"],
@@ -347,14 +351,14 @@ def raw_jira_issues(context, jira: JiraResource) -> MaterializeResult | None:
             """
             INSERT INTO raw.raw_jira_issues (
                 issue_key, sprint_id, board_id, summary,
-                story_points, t_shirt_size, status_category, labels,
+                story_points, t_shirt_size, status_category, status, labels,
                 assignee, cf_sprint_id, cf_sprint_name, cf_sprint_state, _extracted_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 [
                     r["issue_key"], r["sprint_id"], r["board_id"], r["summary"],
-                    r["story_points"], r["t_shirt_size"], r["status_category"], r["labels"],
+                    r["story_points"], r["t_shirt_size"], r["status_category"], r["status"], r["labels"],
                     r["assignee"], r["cf_sprint_id"], r["cf_sprint_name"],
                     r["cf_sprint_state"], r["_extracted_at"],
                 ]

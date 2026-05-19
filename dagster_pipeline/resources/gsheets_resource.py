@@ -46,12 +46,26 @@ class GSheetsResource(ConfigurableResource):
     # ------------------------------------------------------------------ #
 
     def read_sheet_as_records(self, spreadsheet_id: str, sheet_name: str) -> list[dict[str, Any]]:
-        """Read all rows of a named sheet as a list of dicts (first row = header)."""
+        """Read all rows of a named sheet as a list of dicts (first row = header).
+
+        Uses get_all_values() rather than get_all_records() to tolerate sheets that
+        have trailing empty columns — gspread raises on duplicate blank header names.
+        Only columns with a non-empty header are included in the returned dicts.
+        """
         log = get_dagster_logger()
         client = self._client()
         wb = client.open_by_key(spreadsheet_id)
         ws = wb.worksheet(sheet_name)
-        records = ws.get_all_records(empty2zero=False, head=1)
+        all_values = ws.get_all_values()
+        if not all_values:
+            log.info(f"Read 0 rows from '{sheet_name}' in {spreadsheet_id}")
+            return []
+        header = all_values[0]
+        valid = [(i, h) for i, h in enumerate(header) if h.strip()]
+        records = [
+            {h: (row[i] if i < len(row) else "") for i, h in valid}
+            for row in all_values[1:]
+        ]
         log.info(f"Read {len(records)} rows from '{sheet_name}' in {spreadsheet_id}")
         return records
 

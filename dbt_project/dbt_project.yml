@@ -10,6 +10,11 @@ test-paths: ["tests"]
 target-path: "target"
 clean-targets: ["target", "dbt_packages"]
 
+on-run-start:
+  # Ensure tables populated by Dagster extraction assets exist before dbt models run.
+  # These are no-ops once the Dagster assets have materialised the tables.
+  - "CREATE TABLE IF NOT EXISTS raw.raw_sprint_planning (issue_key VARCHAR, sprint_name VARCHAR, board VARCHAR, subteam VARCHAR, summary VARCHAR, status VARCHAR, planned_points VARCHAR, include VARCHAR, _extracted_at VARCHAR)"
+
 vars:
   # Rolling window size for velocity average (override via --vars or env)
   rolling_window_size: 5
