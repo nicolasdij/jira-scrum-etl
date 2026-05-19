@@ -172,8 +172,6 @@ def gsheets_sprint_plan_export(
             planned_points,
             subteam_capacity,
             included_issues,
-            total_issues,
-            subteam_size,
             total_available_days,
             ideal_days
         FROM marts.mart_sprint_plan
