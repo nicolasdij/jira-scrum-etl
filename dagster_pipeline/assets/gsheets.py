@@ -461,6 +461,7 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
             SELECT issue_key, summary, story_points, t_shirt_size, status, labels
             FROM raw.raw_jira_issues
             WHERE sprint_id = ? AND board_id = ?
+              AND status_category != 'cancelled'
             """,
             [sprint_id, board_id],
         ).fetchall()

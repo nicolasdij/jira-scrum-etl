@@ -22,3 +22,4 @@ SELECT
     _extracted_at
 FROM source
 WHERE issue_key IS NOT NULL AND issue_key != ''
+  AND LOWER(TRIM(COALESCE(status, ''))) != 'cancelled'
