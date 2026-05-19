@@ -348,9 +348,7 @@ def gsheets_team_splits_prepopulator(
         for r in existing
     }
 
-    _TEAM_SPLITS_HEADER = ["sprint_name", "sprint_start_date", "member_name", "board", "subteam", "days_allocated"]
-
-    new_records: list[dict] = []
+    new_rows: list[list] = []
     for sprint_name, board_id in future_sprints:
         board_key = board_map.get(board_id, str(board_id))
         start_date = (sprint_dates.get(sprint_name) or ("", ""))[0][:10]
@@ -360,26 +358,21 @@ def gsheets_team_splits_prepopulator(
             key = (sprint_name, member_name, board_key, subteam)
             if key not in existing_keys:
                 days_allocated = effective_days_cache.get((sprint_name, member_name), "")
-                new_records.append({
-                    "sprint_name": sprint_name, "sprint_start_date": start_date,
-                    "member_name": member_name, "board": board_key,
-                    "subteam": subteam, "days_allocated": days_allocated,
-                })
+                new_rows.append([sprint_name, start_date, member_name, board_key, subteam, days_allocated])
                 existing_keys.add(key)
 
-    all_records = existing + new_records
-    all_records.sort(key=lambda r: (
-        r.get("sprint_start_date") or "",
-        r.get("sprint_name") or "",
-        r.get("member_name") or "",
-        r.get("subteam") or "",
-    ))
-    sheet_rows = [_TEAM_SPLITS_HEADER] + [[r.get(h, "") for h in _TEAM_SPLITS_HEADER] for r in all_records]
-    gsheets.overwrite_sheet(gsheets.input_spreadsheet_id, SHEET_TEAM_SPLITS, sheet_rows)
-    if new_records:
-        context.log.info(f"Added {len(new_records)} skeleton rows and re-sorted '{SHEET_TEAM_SPLITS}'")
+    if not existing:
+        gsheets.overwrite_sheet(
+            gsheets.input_spreadsheet_id,
+            SHEET_TEAM_SPLITS,
+            [["sprint_name", "sprint_start_date", "member_name", "board", "subteam", "days_allocated"]],
+        )
+
+    if new_rows:
+        context.log.info(f"Appending {len(new_rows)} skeleton rows to '{SHEET_TEAM_SPLITS}'")
+        gsheets.append_rows_to_input_sheet(SHEET_TEAM_SPLITS, new_rows)
     else:
-        context.log.info(f"No new rows; re-sorted '{SHEET_TEAM_SPLITS}'")
+        context.log.info("All future sprint/member/board combinations already present in sheet.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -497,31 +490,31 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
         for r in existing
     }
 
-    _SPRINT_PLANNING_HEADER = ["issue_key", "sprint_name", "board", "subteam", "summary", "status", "planned_points", "include"]
+    if not existing:
+        gsheets.overwrite_sheet(
+            gsheets.input_spreadsheet_id,
+            SHEET_SPRINT_PLANNING,
+            [["issue_key", "sprint_name", "board", "subteam", "summary", "status", "planned_points", "include"]],
+        )
 
-    new_records: list[dict] = []
+    new_rows: list[list] = []
     for board_id, sprint_name, issue_key, summary, story_points, t_shirt_size, status, labels in all_issues:
         if (issue_key, sprint_name) in existing_keys:
             continue
         board_key = board_map.get(board_id, str(board_id))
         subteam = _derive_subteam(labels, board_key) or ""
         planned_points = story_points if story_points is not None else t_shirt_size
-        new_records.append({
-            "issue_key": issue_key, "sprint_name": sprint_name, "board": board_key,
-            "subteam": subteam, "summary": summary or "", "status": status or "",
-            "planned_points": planned_points if planned_points is not None else "",
-            "include": "TRUE",
-        })
+        new_rows.append([
+            issue_key, sprint_name, board_key, subteam, summary or "",
+            status or "", planned_points if planned_points is not None else "", "TRUE",
+        ])
         existing_keys.add((issue_key, sprint_name))
 
-    all_records = existing + new_records
-    all_records.sort(key=lambda r: (r.get("sprint_name") or "", r.get("subteam") or ""))
-    sheet_rows = [_SPRINT_PLANNING_HEADER] + [[r.get(h, "") for h in _SPRINT_PLANNING_HEADER] for r in all_records]
-    gsheets.overwrite_sheet(gsheets.input_spreadsheet_id, SHEET_SPRINT_PLANNING, sheet_rows)
-    if new_records:
-        context.log.info(f"Added {len(new_records)} issue rows and re-sorted '{SHEET_SPRINT_PLANNING}'")
+    if new_rows:
+        context.log.info(f"Appending {len(new_rows)} issue rows to '{SHEET_SPRINT_PLANNING}'")
+        gsheets.append_rows_to_input_sheet(SHEET_SPRINT_PLANNING, new_rows)
     else:
-        context.log.info(f"No new issues; re-sorted '{SHEET_SPRINT_PLANNING}'")
+        context.log.info("All issues for target sprints already present in sheet.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
