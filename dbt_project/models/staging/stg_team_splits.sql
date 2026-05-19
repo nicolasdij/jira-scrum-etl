@@ -13,9 +13,8 @@ WITH source AS (
     WHERE sprint_name IS NOT NULL
       AND member_name IS NOT NULL
       AND board       IS NOT NULL
-      -- Only include rows where days_allocated > 0 (blanks = no split)
+      -- Exclude rows with no value; keep 0 as a valid "member not available" entry
       AND days_allocated IS NOT NULL
-      AND days_allocated > 0
 ),
 
 -- Resolve sprint_name → sprint_id
