@@ -218,10 +218,16 @@ def raw_jira_issues(context, jira: JiraResource) -> MaterializeResult | None:
             cf_sprint_id    VARCHAR,
             cf_sprint_name  VARCHAR,
             cf_sprint_state VARCHAR,
+            issue_type      VARCHAR,
+            is_subtask      BOOLEAN,
+            parent_key      VARCHAR,
             _extracted_at   VARCHAR
         )
     """)
     con.execute("ALTER TABLE raw.raw_jira_issues ADD COLUMN IF NOT EXISTS status VARCHAR")
+    con.execute("ALTER TABLE raw.raw_jira_issues ADD COLUMN IF NOT EXISTS issue_type VARCHAR")
+    con.execute("ALTER TABLE raw.raw_jira_issues ADD COLUMN IF NOT EXISTS is_subtask BOOLEAN")
+    con.execute("ALTER TABLE raw.raw_jira_issues ADD COLUMN IF NOT EXISTS parent_key VARCHAR")
 
     # All board-sprints starting on this date (standard case: one row per board).
     sprint_rows = con.execute(
@@ -306,6 +312,8 @@ def raw_jira_issues(context, jira: JiraResource) -> MaterializeResult | None:
             labels = fields.get("labels") or []
             sprint_ref = _resolve_sprint_from_field(fields.get("customfield_10103"))
             assignee_obj = fields.get("assignee") or {}
+            issuetype_obj = fields.get("issuetype") or {}
+            parent_obj = fields.get("parent") or {}
             all_rows.append({
                 "issue_key": issue.get("key"),
                 # Use the canonical sprint (latest startDate) rather than the partition key so
@@ -323,6 +331,9 @@ def raw_jira_issues(context, jira: JiraResource) -> MaterializeResult | None:
                 "cf_sprint_id": sprint_ref["id"],
                 "cf_sprint_name": sprint_ref["name"],
                 "cf_sprint_state": sprint_ref["state"],
+                "issue_type": issuetype_obj.get("name"),
+                "is_subtask": bool(issuetype_obj.get("subtask")),
+                "parent_key": parent_obj.get("key"),
                 "_extracted_at": datetime.utcnow().isoformat(),
             })
 
@@ -352,15 +363,17 @@ def raw_jira_issues(context, jira: JiraResource) -> MaterializeResult | None:
             INSERT INTO raw.raw_jira_issues (
                 issue_key, sprint_id, board_id, summary,
                 story_points, t_shirt_size, status_category, status, labels,
-                assignee, cf_sprint_id, cf_sprint_name, cf_sprint_state, _extracted_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                assignee, cf_sprint_id, cf_sprint_name, cf_sprint_state,
+                issue_type, is_subtask, parent_key, _extracted_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 [
                     r["issue_key"], r["sprint_id"], r["board_id"], r["summary"],
                     r["story_points"], r["t_shirt_size"], r["status_category"], r["status"], r["labels"],
                     r["assignee"], r["cf_sprint_id"], r["cf_sprint_name"],
-                    r["cf_sprint_state"], r["_extracted_at"],
+                    r["cf_sprint_state"], r["issue_type"], r["is_subtask"], r["parent_key"],
+                    r["_extracted_at"],
                 ]
                 for r in all_rows
             ],

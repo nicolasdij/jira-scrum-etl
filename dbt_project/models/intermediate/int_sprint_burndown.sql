@@ -11,8 +11,8 @@ WITH done_issues AS (
         sprint_id,
         board_id,
         subteam,
-        COALESCE(story_points, 0) AS story_points
-    FROM {{ ref('stg_jira_issues') }}
+        story_points
+    FROM {{ ref('int_effective_issues') }}
     WHERE status_category = 'done'
       AND subteam IS NOT NULL
 ),

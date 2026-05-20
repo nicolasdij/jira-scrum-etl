@@ -1,7 +1,8 @@
 -- stg_jira_issues
 -- Clean issues: resolve story points, status category, and sub-team via the
 -- first matching sub-team label in the labels array.
--- Issues with no matching sub-team label are kept with subteam = NULL.
+-- Issues with no matching sub-team label are kept with subteam_from_label = NULL;
+-- `subteam` additionally falls back to the board's default_subteam when no label matches.
 --
 -- `labels` is stored as a JSON array string, e.g. '["delivery-sol-arch","other"]'.
 -- We use DuckDB's list functions (from_json, list_contains, list_position) to
@@ -37,18 +38,24 @@ base AS (
         s.board_id,
         s.summary,
         s.story_points::DOUBLE        AS story_points,
+        s.t_shirt_size::DOUBLE        AS t_shirt_size,
         LOWER(s.status_category)      AS status_category,
+        s.status,
         s.labels,
         s.assignee,
         s.cf_sprint_id,
         s.cf_sprint_name,
         s.cf_sprint_state,
+        s.issue_type,
+        s.is_subtask,
+        s.parent_key,
         s._extracted_at
     FROM source s
 )
 
 SELECT
     b.*,
+    fs.subteam                                            AS subteam_from_label,
     COALESCE(fs.subteam, NULLIF(bc.default_subteam, '')) AS subteam
 FROM base b
 LEFT JOIN first_subteam fs USING (issue_key)

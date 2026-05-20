@@ -131,6 +131,8 @@ class JiraResource(ConfigurableResource):
             "status",
             "labels",
             "assignee",
+            "issuetype",
+            "parent",
             "customfield_10105",   # story points
             "customfield_10103",   # sprint descriptor array
             "customfield_10834",   # t-shirt size
@@ -140,7 +142,12 @@ class JiraResource(ConfigurableResource):
             self._paginate_post(
                 session,
                 url,
-                body={"jql": f"sprint = {sprint_id} AND issuetype in (Story, Task, Bug)", "fields": fields},
+                body={
+                    "jql": (
+                        f"sprint = {sprint_id} AND issuetype in (Story, Task, Bug, Sub-task)"
+                    ),
+                    "fields": fields,
+                },
                 list_key="issues",
             )
         )

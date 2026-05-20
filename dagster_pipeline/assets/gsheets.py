@@ -390,9 +390,13 @@ def gsheets_team_splits_prepopulator(
         "Inserts skeleton rows into the Sprint Planning sheet for the immediately following "
         "sprint per board (first future sprint by start date). "
         "Only adds rows not already present — existing edits are never overwritten. "
+        "Applies the parent/subtask retention rule: a parent with at least one labelled "
+        "subtask in the sprint is dropped in favour of its labelled subtasks; otherwise "
+        "the parent is kept and its subtasks are ignored. Unlabelled subtasks are always "
+        "dropped. "
         "planned_points is pre-filled from story_points (customfield_10105), falling back "
         "to t_shirt_size (customfield_10834). subteam is derived from issue labels via "
-        "subteam_labels, with board default_subteam as fallback."
+        "subteam_labels, with board default_subteam as fallback (parents only)."
     ),
 )
 def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> None:
@@ -458,7 +462,8 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
     for board_id, (sprint_id, sprint_name, _) in target_sprints.items():
         rows = con.execute(
             """
-            SELECT issue_key, summary, story_points, t_shirt_size, status, labels
+            SELECT issue_key, summary, story_points, t_shirt_size, status, labels,
+                   is_subtask, parent_key
             FROM raw.raw_jira_issues
             WHERE sprint_id = ? AND board_id = ?
               AND status_category != 'cancelled'
@@ -474,15 +479,24 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
         context.log.info("No issues found for target sprints; nothing to pre-populate.")
         return
 
-    def _derive_subteam(labels_json: str | None, board_key: str) -> str | None:
-        if labels_json:
-            try:
-                for label in json.loads(labels_json):
-                    if label in subteam_label_map:
-                        return subteam_label_map[label]
-            except Exception:
-                pass
-        return default_subteam_map.get(board_key)
+    def _first_label_subteam(labels_json: str | None) -> str | None:
+        """Strict label match: returns the subteam from the first matching label, else None."""
+        if not labels_json:
+            return None
+        try:
+            for label in json.loads(labels_json):
+                if label in subteam_label_map:
+                    return subteam_label_map[label]
+        except Exception:
+            return None
+        return None
+
+    # Pass 1: per (sprint_name, parent_key), record whether any subtask is labelled.
+    parents_with_labelled_subtask: set[tuple[str, str]] = set()
+    for row in all_issues:
+        _, sprint_name, _, _, _, _, _, labels, is_subtask, parent_key = row
+        if is_subtask and parent_key and _first_label_subteam(labels) is not None:
+            parents_with_labelled_subtask.add((sprint_name, parent_key))
 
     # Read existing rows to avoid duplicates
     existing = gsheets.read_input_sheet(SHEET_SPRINT_PLANNING)
@@ -500,11 +514,27 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
 
     jira_base_url = os.environ.get("JIRA_BASE_URL", "").rstrip("/")
     new_rows: list[list] = []
-    for board_id, sprint_name, issue_key, summary, story_points, t_shirt_size, status, labels in all_issues:
+    for row in all_issues:
+        (
+            board_id, sprint_name, issue_key, summary,
+            story_points, t_shirt_size, status, labels, is_subtask, parent_key,
+        ) = row
         if (issue_key, sprint_name) in existing_keys:
             continue
         board_key = board_map.get(board_id, str(board_id))
-        subteam = _derive_subteam(labels, board_key) or ""
+        label_subteam = _first_label_subteam(labels)
+
+        if is_subtask:
+            # Rule #1: drop subtasks without a subteam-matching label.
+            if label_subteam is None:
+                continue
+            subteam = label_subteam
+        else:
+            # Rule #3: drop parents that have at least one labelled subtask in the sprint.
+            if (sprint_name, issue_key) in parents_with_labelled_subtask:
+                continue
+            subteam = label_subteam or default_subteam_map.get(board_key) or ""
+
         planned_points = story_points if story_points is not None else t_shirt_size
         issue_link = f'=HYPERLINK("{jira_base_url}/browse/{issue_key}", "{issue_key}")'
         new_rows.append([
