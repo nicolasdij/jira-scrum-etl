@@ -103,6 +103,7 @@ def _resolve_sprint_from_field(field_value: Any) -> dict[str, str | None]:
     name="raw_jira_sprints",
     key_prefix=["raw"],
     group_name="raw_jira",
+    op_tags={"dagster/concurrency_key": "duckdb"},
     description="All sprints for DELI (board 74) and NFR (board 212) boards.",
 )
 def raw_jira_sprints(context, jira: JiraResource) -> None:
@@ -163,11 +164,20 @@ def raw_jira_sprints(context, jira: JiraResource) -> None:
         if raw_sd:
             new_dates.add(raw_sd[:10])  # "2026-04-14T08:44:00Z" → "2026-04-14"
 
-    existing = set(context.instance.get_dynamic_partitions("sprint_dates"))
-    to_add = list(new_dates - existing)
-    if to_add:
-        context.instance.add_dynamic_partitions("sprint_dates", to_add)
-        context.log.info(f"Registered {len(to_add)} new sprint date partition(s): {to_add}")
+    # Dagster's partition picker shows dynamic partitions in registration order, so we
+    # keep the registered list strictly sorted by date. If existing partitions are out
+    # of order (legacy from set-iteration order), re-register all of them in order.
+    existing_ordered = list(context.instance.get_dynamic_partitions("sprint_dates"))
+    desired_ordered = sorted(set(existing_ordered) | new_dates)
+    if existing_ordered != desired_ordered:
+        for k in existing_ordered:
+            context.instance.delete_dynamic_partition("sprint_dates", k)
+        context.instance.add_dynamic_partitions("sprint_dates", desired_ordered)
+        added = sorted(new_dates - set(existing_ordered))
+        context.log.info(
+            f"Re-registered {len(desired_ordered)} sprint_dates partition(s) in sorted order"
+            + (f"; {len(added)} new: {added}" if added else "")
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

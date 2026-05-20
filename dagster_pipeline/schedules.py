@@ -77,6 +77,28 @@ sprint_plan_update_job = define_asset_job(
     ),
 )
 
+# One-click sync after editing a Jira issue (e.g. setting a t-shirt size):
+# re-fetches the chosen sprint's issues from Jira, refreshes blank cells in the
+# Sprint Planning sheet, and rebuilds the Sprint Plan output tab.
+# When launched, pick the future sprint's start_date (YYYY-MM-DD) as the partition key.
+sprint_planning_sync_job = define_asset_job(
+    name="sprint_planning_sync_job",
+    selection=AssetSelection.assets(
+        AssetKey(["raw", "raw_jira_issues"]),
+        "gsheets_sprint_planning_prepopulator",
+        AssetKey(["raw", "raw_sprint_planning"]),
+        AssetKey(["staging", "stg_sprint_planning"]),
+        AssetKey(["marts", "mart_sprint_plan"]),
+        "gsheets_sprint_plan_export",
+    ),
+    description=(
+        "End-to-end sync after a Jira edit: re-fetches raw_jira_issues for the chosen "
+        "sprint-date partition, refreshes blank planned_points/subteam/status cells in "
+        "the Sprint Planning sheet, then rebuilds the Sprint Plan output tab. "
+        "Pick the future sprint's start_date (YYYY-MM-DD) as the partition when launching."
+    ),
+)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Schedules
 # ─────────────────────────────────────────────────────────────────────────────

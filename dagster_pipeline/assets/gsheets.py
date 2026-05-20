@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import date, datetime, timedelta
-from typing import Optional
+from typing import Any, Optional
 
 import time
 
@@ -107,6 +107,7 @@ def _db(db_path: str | None = None, retries: int = 8, delay: float = 5.0) -> duc
     name="raw_time_off",
     key_prefix=["raw"],
     group_name="raw_gsheets",
+    op_tags={"dagster/concurrency_key": "duckdb"},
     description="Time-off periods per team member read from Google Sheets.",
 )
 def raw_time_off(context, gsheets: GSheetsResource) -> None:
@@ -146,6 +147,7 @@ def raw_time_off(context, gsheets: GSheetsResource) -> None:
     name="raw_public_holidays",
     key_prefix=["raw"],
     group_name="raw_gsheets",
+    op_tags={"dagster/concurrency_key": "duckdb"},
     description="Public holidays per region (comma-separated) from Google Sheets.",
 )
 def raw_public_holidays(context, gsheets: GSheetsResource) -> None:
@@ -182,6 +184,7 @@ def raw_public_holidays(context, gsheets: GSheetsResource) -> None:
     key_prefix=["raw"],
     group_name="raw_gsheets",
     deps=["gsheets_team_splits_prepopulator"],
+    op_tags={"dagster/concurrency_key": "duckdb"},
     description="Per-sprint, per-member board/sub-team allocation read from Google Sheets.",
 )
 def raw_team_splits(context, gsheets: GSheetsResource) -> None:
@@ -233,6 +236,7 @@ def raw_team_splits(context, gsheets: GSheetsResource) -> None:
         AssetKey(["raw", "raw_time_off"]),
         AssetKey(["raw", "raw_public_holidays"]),
     ],
+    op_tags={"dagster/concurrency_key": "duckdb"},
     description=(
         "Inserts skeleton rows into the Team Splits sheet for any (sprint, member, board) "
         "combination that is missing — only for sprints with state='future'. "
@@ -246,7 +250,7 @@ def gsheets_team_splits_prepopulator(
     gsheets: GSheetsResource,
 ) -> None:
     db_path = os.environ.get("DUCKDB_PATH", "data/scrum.duckdb")
-    con = duckdb.connect(db_path)
+    con = _db(db_path)
 
     # Fetch future sprints with their date windows
     future_sprints_raw = con.execute(
@@ -386,10 +390,15 @@ def gsheets_team_splits_prepopulator(
         AssetKey(["raw", "raw_jira_issues"]),
         AssetKey(["raw", "raw_jira_sprints"]),
     ],
+    op_tags={"dagster/concurrency_key": "duckdb"},
     description=(
         "Inserts skeleton rows into the Sprint Planning sheet for the immediately following "
         "sprint per board (first future sprint by start date). "
-        "Only adds rows not already present — existing edits are never overwritten. "
+        "Existing rows: blank planned_points / subteam / status cells are refreshed "
+        "from source; non-blank cells (manual edits) are preserved. Rows for a target "
+        "sprint whose issue no longer appears in raw_jira_issues for that sprint (moved "
+        "to another project, deleted, or supplanted by a labelled subtask under the "
+        "retention rule) are deleted. Rows for past sprints are never touched. "
         "Applies the parent/subtask retention rule: a parent with at least one labelled "
         "subtask in the sprint is dropped in favour of its labelled subtasks; otherwise "
         "the parent is kept and its subtasks are ignored. Unlabelled subtasks are always "
@@ -498,11 +507,13 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
         if is_subtask and parent_key and _first_label_subteam(labels) is not None:
             parents_with_labelled_subtask.add((sprint_name, parent_key))
 
-    # Read existing rows to avoid duplicates
+    # Read existing rows so we can (a) skip appending duplicates and
+    # (b) refresh blank planned_points/subteam/status cells from source.
+    # Row index in the sheet = position in `existing` + 2 (1-based, header row 1).
     existing = gsheets.read_input_sheet(SHEET_SPRINT_PLANNING)
-    existing_keys: set[tuple] = {
-        (r.get("issue_key"), r.get("sprint_name"))
-        for r in existing
+    existing_by_key: dict[tuple, tuple[int, dict]] = {
+        (r.get("issue_key"), r.get("sprint_name")): (idx + 2, r)
+        for idx, r in enumerate(existing)
     }
 
     if not existing:
@@ -512,15 +523,27 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
             [["issue_key", "sprint_name", "board", "subteam", "summary", "status", "planned_points", "include"]],
         )
 
+    # Column letters mirror the header order above.
+    COL_SUBTEAM = "D"
+    COL_STATUS = "F"
+    COL_PLANNED_POINTS = "G"
+
+    def _is_blank(val: Any) -> bool:
+        return val is None or (isinstance(val, str) and val.strip() == "")
+
+    # Sprint names currently being prepopulated — orphan detection is limited to these
+    # so we never touch rows for past sprints (which raw_jira_issues no longer reflects).
+    target_sprint_names: set[str] = {ts[1] for ts in target_sprints.values()}
+
     jira_base_url = os.environ.get("JIRA_BASE_URL", "").rstrip("/")
     new_rows: list[list] = []
+    cell_updates: list[dict] = []
+    kept_keys: set[tuple] = set()  # (issue_key, sprint_name) surviving the retention rule
     for row in all_issues:
         (
             board_id, sprint_name, issue_key, summary,
             story_points, t_shirt_size, status, labels, is_subtask, parent_key,
         ) = row
-        if (issue_key, sprint_name) in existing_keys:
-            continue
         board_key = board_map.get(board_id, str(board_id))
         label_subteam = _first_label_subteam(labels)
 
@@ -535,19 +558,65 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
                 continue
             subteam = label_subteam or default_subteam_map.get(board_key) or ""
 
+        kept_keys.add((issue_key, sprint_name))
         planned_points = story_points if story_points is not None else t_shirt_size
+
+        existing_match = existing_by_key.get((issue_key, sprint_name))
+        if existing_match is not None:
+            # Row already in sheet: refresh blank planned_points/subteam/status only.
+            sheet_row, existing_row = existing_match
+            if _is_blank(existing_row.get("planned_points")) and planned_points is not None:
+                cell_updates.append({
+                    "range": f"{COL_PLANNED_POINTS}{sheet_row}",
+                    "value": planned_points,
+                })
+            if _is_blank(existing_row.get("subteam")) and subteam:
+                cell_updates.append({
+                    "range": f"{COL_SUBTEAM}{sheet_row}",
+                    "value": subteam,
+                })
+            if _is_blank(existing_row.get("status")) and status:
+                cell_updates.append({
+                    "range": f"{COL_STATUS}{sheet_row}",
+                    "value": status,
+                })
+            continue
+
         issue_link = f'=HYPERLINK("{jira_base_url}/browse/{issue_key}", "{issue_key}")'
         new_rows.append([
             issue_link, sprint_name, board_key, subteam, summary or "",
             status or "", planned_points if planned_points is not None else "", "TRUE",
         ])
-        existing_keys.add((issue_key, sprint_name))
+
+    # Orphan rows: sheet entries for a target sprint whose (issue_key, sprint_name) no
+    # longer appears in raw_jira_issues for that sprint (issue moved to another project,
+    # deleted, or supplanted by a labelled subtask under the retention rule).
+    orphan_rows: list[int] = [
+        sheet_row
+        for (issue_key, sprint_name), (sheet_row, _) in existing_by_key.items()
+        if sprint_name in target_sprint_names and (issue_key, sprint_name) not in kept_keys
+    ]
+
+    # Order matters: cell updates use the original row indices, so apply them BEFORE
+    # any deletion shifts row numbers. Appends come last and aren't affected.
+    if cell_updates:
+        context.log.info(
+            f"Refreshing {len(cell_updates)} blank cell(s) in '{SHEET_SPRINT_PLANNING}'"
+        )
+        gsheets.batch_update_input_sheet(SHEET_SPRINT_PLANNING, cell_updates)
+
+    if orphan_rows:
+        context.log.info(
+            f"Deleting {len(orphan_rows)} orphan row(s) from '{SHEET_SPRINT_PLANNING}' "
+            f"(issues no longer in their target sprint)"
+        )
+        gsheets.delete_input_sheet_rows(SHEET_SPRINT_PLANNING, orphan_rows)
 
     if new_rows:
         context.log.info(f"Appending {len(new_rows)} issue rows to '{SHEET_SPRINT_PLANNING}'")
         gsheets.append_rows_to_input_sheet(SHEET_SPRINT_PLANNING, new_rows)
-    else:
-        context.log.info("All issues for target sprints already present in sheet.")
+    elif not cell_updates and not orphan_rows:
+        context.log.info("All issues for target sprints already present in sheet; no refresh needed.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -559,6 +628,7 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
     key_prefix=["raw"],
     group_name="raw_gsheets",
     deps=["gsheets_sprint_planning_prepopulator"],
+    op_tags={"dagster/concurrency_key": "duckdb"},
     description="Per-sprint issue planning data read from the Sprint Planning Google Sheet tab.",
 )
 def raw_sprint_planning(context, gsheets: GSheetsResource) -> None:

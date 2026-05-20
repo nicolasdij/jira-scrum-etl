@@ -121,3 +121,43 @@ class GSheetsResource(ConfigurableResource):
             ws = wb.add_worksheet(title=sheet_name, rows=1, cols=1)
         ws.append_rows(rows, value_input_option="USER_ENTERED")
         log.info(f"Appended {len(rows)} rows to '{sheet_name}' in {self.input_spreadsheet_id}")
+
+    def delete_input_sheet_rows(self, sheet_name: str, row_indices: list[int]) -> None:
+        """Delete the given 1-based row numbers from a sheet.
+
+        Indices are sorted descending and deleted one at a time so that earlier
+        deletions don't shift the row numbers of later ones.
+        """
+        log = get_dagster_logger()
+        unique = sorted({i for i in row_indices if i > 1}, reverse=True)  # row 1 = header
+        if not unique:
+            log.info(f"No rows to delete from '{sheet_name}'")
+            return
+        client = self._client()
+        wb = client.open_by_key(self.input_spreadsheet_id)
+        ws = wb.worksheet(sheet_name)
+        for idx in unique:
+            ws.delete_rows(idx)
+        log.info(f"Deleted {len(unique)} row(s) from '{sheet_name}' in {self.input_spreadsheet_id}")
+
+    def batch_update_input_sheet(
+        self, sheet_name: str, updates: list[dict[str, Any]]
+    ) -> None:
+        """Apply targeted single-cell updates to a sheet in one batch request.
+
+        updates: list of {"range": "G5", "value": <val>} dicts (worksheet-scoped A1).
+        """
+        log = get_dagster_logger()
+        if not updates:
+            log.info(f"No cell updates to apply to '{sheet_name}'")
+            return
+        client = self._client()
+        wb = client.open_by_key(self.input_spreadsheet_id)
+        ws = wb.worksheet(sheet_name)
+        ws.batch_update(
+            [{"range": u["range"], "values": [[u["value"]]]} for u in updates],
+            value_input_option="USER_ENTERED",
+        )
+        log.info(
+            f"Updated {len(updates)} cell(s) in '{sheet_name}' in {self.input_spreadsheet_id}"
+        )

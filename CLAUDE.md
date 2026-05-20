@@ -79,9 +79,9 @@ Google Sheets (input) ──► Dagster assets ──► DuckDB raw tables
 
 ### Key Design Decisions
 
-**DuckDB concurrency**: `raw_jira_issues` is partitioned by sprint ID, so Dagster materializes many partitions concurrently. DuckDB only allows one writer at a time, so `dagster_home/dagster.yaml` sets `QueuedRunCoordinator` with `max_concurrent_runs: 1` for assets tagged `dagster/concurrency_key: duckdb`. Assets that write to DuckDB must include this tag.
+**DuckDB concurrency**: DuckDB only allows one writer at a time. `dagster_home/dagster.yaml` configures `QueuedRunCoordinator` with `tag_concurrency_limits` so runs tagged `dagster/concurrency_key: duckdb` are serialised (limit: 1). Every asset that opens a write connection to the DuckDB file must include `op_tags={"dagster/concurrency_key": "duckdb"}` — currently `raw_jira_sprints`, `raw_jira_issues`, `raw_time_off`, `raw_public_holidays`, `raw_team_splits`, `raw_sprint_planning`, `gsheets_team_splits_prepopulator`, and `gsheets_sprint_planning_prepopulator`. Read-only connections (exports, sensors, scripts) do not need the tag — the DuckDB write lock does not block read-only opens. As a defensive second line, the `_db()` helper in `gsheets.py` and `_connect_duckdb()` in `jira.py` retry on lock contention.
 
-**Sprint partitioning**: `raw_jira_issues` uses `DynamicPartitionsDefinition(name="sprint_dates")` with YYYY-MM-DD keys. One partition = one sprint cycle = all boards (DELI + NFR share the same start date). `raw_jira_sprints` registers `start_date[:10]` as partition keys; sprints without a start_date are skipped. The asset fetches issues for every board whose sprint starts on the partition date in a single run, applying per-board skip logic independently. The hourly sensor refreshes active/future dates daily, loads older closed dates once, and daily-refreshes the most recently closed date per board to capture issues resolved after the last active-sprint fetch but before close.
+**Sprint partitioning**: `raw_jira_issues` uses `DynamicPartitionsDefinition(name="sprint_dates")` with YYYY-MM-DD keys. One partition = one sprint cycle = all boards (DELI + NFR share the same start date). `raw_jira_sprints` registers `start_date[:10]` as partition keys; sprints without a start_date are skipped. The asset keeps the registered partition list strictly sorted by date — if the existing order differs from sorted, it deletes and re-adds all keys so the Dagster partition picker shows dates chronologically. The asset fetches issues for every board whose sprint starts on the partition date in a single run, applying per-board skip logic independently. The hourly sensor refreshes active/future dates daily, loads older closed dates once, and daily-refreshes the most recently closed date per board to capture issues resolved after the last active-sprint fetch but before close.
 
 **Boards and sub-teams**: Board membership and sub-team groupings are defined in `dbt_project/seeds/board_config.csv` and `subteam_labels.csv`. The DELI board contains DevOps, Backend, and SolArch sub-teams; NFR contains Infra. Adding a new board or sub-team requires updating these seeds.
 
@@ -97,6 +97,10 @@ The same rule is applied inline in `gsheets_sprint_planning_prepopulator` so the
 
 **Sprint planning workflow**: Before committing changes in Jira, use the Sprint Planning input sheet to plan the next sprint. The `gsheets_sprint_planning_prepopulator` fills in one row per *effective* issue currently assigned to the first future sprint per board (`status_category = 'cancelled'` issues excluded). The parent/subtask retention rule above is applied, so a parent with labelled subtasks is replaced by its labelled subtasks in the sheet. `planned_points` is pre-filled from `COALESCE(story_points, t_shirt_size)`; `subteam` is derived from issue labels via `subteam_labels` seed (board default subteam applies only to parents, never to subtasks). The `issue_key` column contains a `=HYPERLINK()` formula linking directly to the Jira issue. Edit `planned_points` and `include` (TRUE/FALSE) as needed, then run `sprint_plan_update_job` to refresh the Sprint Plan output tab. The Sprint Plan tab shows `planned_points` vs `subteam_capacity` (= `recommended_capacity_points` from `mart_capacity_planning`) per subteam.
 
+The prepopulator is mostly non-destructive: it appends new rows and **refreshes blank `planned_points` / `subteam` / `status` cells only** on existing rows (manually entered values are preserved). It does, however, **delete rows whose issue no longer appears in `raw_jira_issues` for a target sprint** — covering Jira moves between projects (e.g. DELI-281 → EIR-1733), deletions, and parents superseded by labelled subtasks. Rows for past sprints are never touched.
+
+**One-click sync after editing in Jira**: `sprint_planning_sync_job` chains `raw_jira_issues` (partitioned) → `gsheets_sprint_planning_prepopulator` → `raw_sprint_planning` → `stg_sprint_planning` → `mart_sprint_plan` → `gsheets_sprint_plan_export`. Launch from the Dagster UI, pick the future sprint's `start_date` (YYYY-MM-DD) as the partition, and it re-fetches that sprint's issues from Jira, refreshes blank cells / removes orphan rows in the Sprint Planning sheet, and rebuilds the Sprint Plan output tab in one run.
+
 ### Schedules and Jobs (Madrid timezone)
 
 | Schedule / Job | What It Does |
@@ -106,6 +110,7 @@ The same rule is applied inline in `gsheets_sprint_planning_prepopulator` so the
 | Hourly sensor | Materialize `raw_jira_issues` partitions |
 | Hourly sensor | Trigger full pipeline on sprint close |
 | `sprint_plan_update_job` (on-demand) | Re-reads Sprint Planning sheet → rebuilds `mart_sprint_plan` → updates Sprint Plan tab |
+| `sprint_planning_sync_job` (on-demand, partitioned) | Re-fetches `raw_jira_issues` for the picked sprint date, refreshes/cleans the Sprint Planning sheet, and rebuilds the Sprint Plan output tab in one run |
 
 ## One-Time / Maintenance Scripts
 
