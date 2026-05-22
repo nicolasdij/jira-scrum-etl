@@ -2,8 +2,12 @@
 -- Weighted velocity per sprint per sub-team.
 --
 -- Formula: FLOOR( burnt_points / capacity_pct )
--- Only closed sprints are included — active and future sprints have no
--- complete burndown data.
+-- Closed sprints are always included. The currently active sprint per board
+-- is also included once its calendar duration is at least 70 % elapsed —
+-- before that point the partial burndown is too noisy to be useful. The
+-- active row uses raw partial burndown (no projection); downstream marts
+-- handle the window-size adjustment.
+-- Future sprints are excluded (no burndown yet).
 
 WITH burndown AS (
     SELECT * FROM {{ ref('int_sprint_burndown') }}
@@ -17,6 +21,14 @@ sprints AS (
     SELECT sprint_id, sprint_state, start_date
     FROM {{ ref('stg_jira_sprints') }}
     WHERE sprint_state = 'closed'
+       OR (
+           sprint_state = 'active'
+           AND start_date IS NOT NULL
+           AND end_date   IS NOT NULL
+           AND (CURRENT_DATE - start_date::DATE)::DOUBLE
+               / NULLIF((end_date::DATE - start_date::DATE)::DOUBLE, 0)
+               >= 0.70
+       )
 )
 
 SELECT
@@ -24,6 +36,7 @@ SELECT
     b.sprint_name,
     b.board_id,
     b.subteam,
+    sp.sprint_state,
     b.burnt_points,
     c.capacity_pct,
     c.subteam_size,

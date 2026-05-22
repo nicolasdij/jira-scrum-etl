@@ -1,7 +1,9 @@
 -- mart_sprint_history
 -- Full history for dashboarding: one row per (sprint, sub-team) with burndown,
 -- capacity %, weighted velocity, and rolling average.
--- Includes all closed sprints where velocity could be computed.
+-- Includes all closed sprints, plus the currently active sprint once it has
+-- crossed the 70 %-elapsed threshold (see int_sprint_velocity). The `sprint_state`
+-- column makes the in-flight row identifiable in the export.
 
 WITH velocity AS (
     SELECT * FROM {{ ref('int_sprint_velocity') }}
@@ -40,6 +42,7 @@ SELECT
     v.sprint_name,
     v.board_id,
     v.subteam,
+    v.sprint_state,
     strftime(v.sprint_start_date::DATE, '%Y-%m-%d') AS sprint_start_date,
     b.burnt_points,
     c.capacity_pct,

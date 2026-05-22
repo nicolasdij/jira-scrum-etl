@@ -1,9 +1,37 @@
 {{ config(materialized='table') }}
 -- stg_jira_sprints
 -- Clean sprint records: parse dates, normalise state, derive sprint_number.
+--
+-- Deduplication: when a board's JQL also includes sprints from other boards
+-- (e.g. the NFR board's filter pulls in DELI sprints), the same sprint_id can
+-- appear in raw_jira_sprints under multiple board_id values. We keep one row
+-- per sprint_id, preferring the row whose board_key (from board_config) is a
+-- prefix of the sprint_name (e.g. 'DELI Sprint 6' → board 'DELI' = 74).
 
 WITH source AS (
     SELECT * FROM {{ source('raw', 'raw_jira_sprints') }}
+),
+
+deduped AS (
+    SELECT s.*
+    FROM (
+        SELECT
+            s.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY s.sprint_id
+                ORDER BY
+                    CASE
+                        WHEN bc.board_key IS NULL                          THEN 2
+                        WHEN s.sprint_name LIKE bc.board_key || '%'        THEN 0
+                        ELSE 1
+                    END,
+                    s._extracted_at DESC
+            ) AS rn
+        FROM source s
+        LEFT JOIN {{ ref('board_config') }} bc
+            ON bc.board_id = s.board_id::INTEGER
+    ) s
+    WHERE s.rn = 1
 ),
 
 cleaned AS (
@@ -23,7 +51,7 @@ cleaned AS (
         )                                           AS sprint_number,
 
         _extracted_at
-    FROM source
+    FROM deduped
     WHERE sprint_id IS NOT NULL
 )
 
