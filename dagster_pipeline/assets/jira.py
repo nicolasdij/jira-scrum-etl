@@ -165,17 +165,18 @@ def raw_jira_sprints(context, jira: JiraResource) -> None:
             new_dates.add(raw_sd[:10])  # "2026-04-14T08:44:00Z" → "2026-04-14"
 
     # Dagster's partition picker shows dynamic partitions in registration order, so we
-    # keep the registered list strictly sorted by date. If existing partitions are out
-    # of order (legacy from set-iteration order), re-register all of them in order.
+    # keep the registered list strictly sorted by date — descending, so the most recent
+    # sprint appears at the top of the picker. If existing partitions are out of order
+    # (legacy ascending or set-iteration order), re-register them all.
     existing_ordered = list(context.instance.get_dynamic_partitions("sprint_dates"))
-    desired_ordered = sorted(set(existing_ordered) | new_dates)
+    desired_ordered = sorted(set(existing_ordered) | new_dates, reverse=True)
     if existing_ordered != desired_ordered:
         for k in existing_ordered:
             context.instance.delete_dynamic_partition("sprint_dates", k)
         context.instance.add_dynamic_partitions("sprint_dates", desired_ordered)
-        added = sorted(new_dates - set(existing_ordered))
+        added = sorted(new_dates - set(existing_ordered), reverse=True)
         context.log.info(
-            f"Re-registered {len(desired_ordered)} sprint_dates partition(s) in sorted order"
+            f"Re-registered {len(desired_ordered)} sprint_dates partition(s) in descending order"
             + (f"; {len(added)} new: {added}" if added else "")
         )
 
