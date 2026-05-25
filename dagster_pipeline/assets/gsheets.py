@@ -511,10 +511,17 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
     # (b) refresh blank planned_points/subteam/status cells from source.
     # Row index in the sheet = position in `existing` + 2 (1-based, header row 1).
     existing = gsheets.read_input_sheet(SHEET_SPRINT_PLANNING)
-    existing_by_key: dict[tuple, tuple[int, dict]] = {
-        (r.get("issue_key"), r.get("sprint_name")): (idx + 2, r)
-        for idx, r in enumerate(existing)
-    }
+    # Keep the FIRST occurrence per (issue_key, sprint_name) as canonical; any later
+    # occurrences are duplicates queued for deletion as orphans.
+    existing_by_key: dict[tuple, tuple[int, dict]] = {}
+    duplicate_rows: list[int] = []
+    for idx, r in enumerate(existing):
+        key = (r.get("issue_key"), r.get("sprint_name"))
+        sheet_row = idx + 2
+        if key in existing_by_key:
+            duplicate_rows.append(sheet_row)
+        else:
+            existing_by_key[key] = (sheet_row, r)
 
     if not existing:
         gsheets.overwrite_sheet(
@@ -590,8 +597,10 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
 
     # Orphan rows: sheet entries for a target sprint whose (issue_key, sprint_name) no
     # longer appears in raw_jira_issues for that sprint (issue moved to another project,
-    # deleted, or supplanted by a labelled subtask under the retention rule).
-    orphan_rows: list[int] = [
+    # deleted, or supplanted by a labelled subtask under the retention rule). Duplicate
+    # rows (extra copies of an (issue_key, sprint_name) already represented by an earlier
+    # row) are always orphans regardless of whether they target a current sprint.
+    orphan_rows: list[int] = duplicate_rows + [
         sheet_row
         for (issue_key, sprint_name), (sheet_row, _) in existing_by_key.items()
         if sprint_name in target_sprint_names and (issue_key, sprint_name) not in kept_keys

@@ -12,6 +12,7 @@ WITH planned AS (
         COUNT(CASE WHEN include THEN 1 END)                                 AS included_issues,
         COUNT(*)                                                             AS total_issues
     FROM {{ ref('stg_sprint_planning') }}
+    WHERE subteam IS NOT NULL AND TRIM(subteam) != ''
     GROUP BY sprint_name, board, subteam
 ),
 

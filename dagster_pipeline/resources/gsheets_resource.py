@@ -50,7 +50,10 @@ class GSheetsResource(ConfigurableResource):
 
         Uses get_all_values() rather than get_all_records() to tolerate sheets that
         have trailing empty columns — gspread raises on duplicate blank header names.
-        Only columns with a non-empty header are included in the returned dicts.
+        Stops at the first empty-header column, which is treated as a divider between
+        the data section and any reference/summary table on the right (e.g. Sprint
+        Planning has its data in cols A-H and a per-subteam summary in cols J-P,
+        separated by an empty col I).
         """
         log = get_dagster_logger()
         client = self._client()
@@ -61,7 +64,8 @@ class GSheetsResource(ConfigurableResource):
             log.info(f"Read 0 rows from '{sheet_name}' in {spreadsheet_id}")
             return []
         header = all_values[0]
-        valid = [(i, h) for i, h in enumerate(header) if h.strip()]
+        end = next((i for i, h in enumerate(header) if not h.strip()), len(header))
+        valid = list(enumerate(header[:end]))
         records = [
             {h: (row[i] if i < len(row) else "") for i, h in valid}
             for row in all_values[1:]
