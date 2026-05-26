@@ -57,6 +57,7 @@ def gsheets_capacity_plan_export(
         """
         SELECT
             target_sprint,
+            sprint_start_date,
             subteam,
             FLOOR(rolling_avg_velocity) as rolling_avg_velocity,
             ROUND(next_sprint_availability_pct * 100, 0) || '%' AS availability_pct,
@@ -64,7 +65,7 @@ def gsheets_capacity_plan_export(
             last_velocity_sprint_name,
             last_velocity_sprint_state
         FROM marts.mart_capacity_planning
-        ORDER BY target_sprint, subteam
+        ORDER BY sprint_start_date, target_sprint, subteam
         """,
     )
 
@@ -92,9 +93,9 @@ def gsheets_sprint_history_export(
         """
         SELECT
             sprint_name,
+            sprint_start_date,
             subteam,
             sprint_state,
-            sprint_start_date,
             burnt_points,
             ROUND(capacity_pct * 100, 0) || '%' AS capacity_pct,
             total_available_days,

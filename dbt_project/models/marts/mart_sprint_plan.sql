@@ -49,8 +49,13 @@ capacity AS (
 
 -- recommended_capacity_points already accounts for rolling velocity × this sprint's
 -- availability percentage, making it the most useful capacity reference for planning.
+-- Joined on (sprint_name, subteam) so we pick up only the FUTURE-target row from
+-- mart_capacity_planning (which now also carries an active-target row per subteam).
 recommended AS (
-    SELECT subteam, recommended_capacity_points AS subteam_capacity
+    SELECT
+        target_sprint                 AS sprint_name,
+        subteam,
+        recommended_capacity_points   AS subteam_capacity
     FROM {{ ref('mart_capacity_planning') }}
 )
 
@@ -67,5 +72,5 @@ SELECT
     c.ideal_days
 FROM planned p
 LEFT JOIN capacity c USING (sprint_name, board, subteam)
-LEFT JOIN recommended r USING (subteam)
+LEFT JOIN recommended r USING (sprint_name, subteam)
 ORDER BY p.board, p.subteam
