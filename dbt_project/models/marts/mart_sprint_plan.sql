@@ -2,18 +2,37 @@
 -- mart_sprint_plan
 -- Planned story points vs capacity per subteam for the next target sprint.
 -- Aggregates only issues where include = TRUE.
+--
+-- Scope: only the *current* target sprint per board (earliest state='future' sprint),
+-- mirroring what the prepopulator targets. Rows for sprints that have since
+-- transitioned to active/closed linger in stg_sprint_planning (the prepop never
+-- deletes rows for past sprints), but they're filtered out here so the Sprint Plan
+-- output reflects only the sprint actually being planned right now.
 
-WITH planned AS (
+WITH next_future_sprint AS (
+    SELECT bc.board_key AS board, s.sprint_name
+    FROM (
+        SELECT board_id, sprint_name,
+               ROW_NUMBER() OVER (PARTITION BY board_id ORDER BY start_date ASC) AS rn
+        FROM {{ ref('stg_jira_sprints') }}
+        WHERE sprint_state = 'future' AND start_date IS NOT NULL
+    ) s
+    JOIN {{ ref('board_config') }} bc ON s.board_id = bc.board_id
+    WHERE s.rn = 1
+),
+
+planned AS (
     SELECT
-        sprint_name,
-        board,
-        subteam,
-        SUM(CASE WHEN include THEN COALESCE(planned_points, 0) ELSE 0 END) AS planned_points,
-        COUNT(CASE WHEN include THEN 1 END)                                 AS included_issues,
-        COUNT(*)                                                             AS total_issues
-    FROM {{ ref('stg_sprint_planning') }}
-    WHERE subteam IS NOT NULL AND TRIM(subteam) != ''
-    GROUP BY sprint_name, board, subteam
+        sp.sprint_name,
+        sp.board,
+        sp.subteam,
+        SUM(CASE WHEN sp.include THEN COALESCE(sp.planned_points, 0) ELSE 0 END) AS planned_points,
+        COUNT(CASE WHEN sp.include THEN 1 END)                                   AS included_issues,
+        COUNT(*)                                                                  AS total_issues
+    FROM {{ ref('stg_sprint_planning') }} sp
+    JOIN next_future_sprint nfs USING (board, sprint_name)
+    WHERE sp.subteam IS NOT NULL AND TRIM(sp.subteam) != ''
+    GROUP BY sp.sprint_name, sp.board, sp.subteam
 ),
 
 capacity AS (

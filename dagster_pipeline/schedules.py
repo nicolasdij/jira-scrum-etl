@@ -26,6 +26,16 @@ def _effective_state(states: list[str]) -> str:
 # Jobs
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Apply this run-level tag to every job that writes to DuckDB or the Sprint
+# Planning Google Sheet. The QueuedRunCoordinator in dagster_home/dagster.yaml
+# limits runs sharing this tag to 1 at a time, which is what prevents:
+#   - DuckDB single-writer lock contention across runs
+#   - concurrent prepop runs racing on gspread append_rows (the bug that left
+#     100 blank rows interleaved with real data in the Sprint Planning sheet)
+# Op-level concurrency tags only serialise ops *within* a run, so they're
+# necessary but not sufficient on their own.
+_DUCKDB_RUN_TAGS = {"dagster/concurrency_key": "duckdb"}
+
 # raw_jira_issues is partitioned per-sprint and managed by its own sensor/job below.
 _partitioned_issues = AssetSelection.assets(AssetKey(["raw", "raw_jira_issues"]))
 
@@ -34,6 +44,7 @@ _partitioned_issues = AssetSelection.assets(AssetKey(["raw", "raw_jira_issues"])
 full_pipeline_job = define_asset_job(
     name="full_pipeline_job",
     selection=AssetSelection.all() - _partitioned_issues,
+    tags=_DUCKDB_RUN_TAGS,
     description=(
         "Full ETL run: extract from Jira and Google Sheets, run dbt transforms, "
         "write results back to Google Sheets."
@@ -44,6 +55,7 @@ full_pipeline_job = define_asset_job(
 extraction_only_job = define_asset_job(
     name="extraction_only_job",
     selection=AssetSelection.groups("raw_jira", "raw_gsheets") - _partitioned_issues,
+    tags=_DUCKDB_RUN_TAGS,
     description="Extract raw data from Jira and Google Sheets into DuckDB without running dbt.",
 )
 
@@ -51,6 +63,7 @@ extraction_only_job = define_asset_job(
 raw_jira_issues_job = define_asset_job(
     name="raw_jira_issues_job",
     selection=_partitioned_issues,
+    tags=_DUCKDB_RUN_TAGS,
     description="Materialises a single sprint partition of raw_jira_issues.",
 )
 
@@ -58,6 +71,7 @@ raw_jira_issues_job = define_asset_job(
 team_splits_prepopulate_job = define_asset_job(
     name="team_splits_prepopulate_job",
     selection=AssetSelection.assets("gsheets_team_splits_prepopulator"),
+    tags=_DUCKDB_RUN_TAGS,
     description="Insert skeleton rows into the Team Splits sheet for future sprints.",
 )
 
@@ -71,6 +85,7 @@ sprint_plan_update_job = define_asset_job(
         AssetKey(["marts", "mart_sprint_plan"]),
         "gsheets_sprint_plan_export",
     ),
+    tags=_DUCKDB_RUN_TAGS,
     description=(
         "Re-reads the Sprint Planning input sheet and rebuilds the Sprint Plan output tab. "
         "Run this after editing planned_points or include values in the Sprint Planning sheet."
@@ -91,6 +106,7 @@ sprint_planning_sync_job = define_asset_job(
         AssetKey(["marts", "mart_sprint_plan"]),
         "gsheets_sprint_plan_export",
     ),
+    tags=_DUCKDB_RUN_TAGS,
     description=(
         "End-to-end sync after a Jira edit: re-fetches raw_jira_issues for the chosen "
         "sprint-date partition, refreshes blank planned_points/subteam/status cells in "

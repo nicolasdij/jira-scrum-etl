@@ -130,7 +130,9 @@ class GSheetsResource(ConfigurableResource):
         """Delete the given 1-based row numbers from a sheet.
 
         Indices are sorted descending and deleted one at a time so that earlier
-        deletions don't shift the row numbers of later ones.
+        deletions don't shift the row numbers of later ones. Individual delete
+        failures (e.g. when a concurrent prepop run shrank the sheet between
+        read and delete) are logged and skipped rather than aborting the batch.
         """
         log = get_dagster_logger()
         unique = sorted({i for i in row_indices if i > 1}, reverse=True)  # row 1 = header
@@ -140,9 +142,22 @@ class GSheetsResource(ConfigurableResource):
         client = self._client()
         wb = client.open_by_key(self.input_spreadsheet_id)
         ws = wb.worksheet(sheet_name)
+        deleted = 0
+        skipped = 0
         for idx in unique:
-            ws.delete_rows(idx)
-        log.info(f"Deleted {len(unique)} row(s) from '{sheet_name}' in {self.input_spreadsheet_id}")
+            try:
+                ws.delete_rows(idx)
+                deleted += 1
+            except gspread.exceptions.APIError as exc:
+                skipped += 1
+                log.warning(
+                    f"Skipped deleting row {idx} from '{sheet_name}' "
+                    f"(likely concurrent modification): {exc}"
+                )
+        log.info(
+            f"Deleted {deleted} row(s) from '{sheet_name}' in {self.input_spreadsheet_id}"
+            + (f" (skipped {skipped} due to API errors)" if skipped else "")
+        )
 
     def batch_update_input_sheet(
         self, sheet_name: str, updates: list[dict[str, Any]]

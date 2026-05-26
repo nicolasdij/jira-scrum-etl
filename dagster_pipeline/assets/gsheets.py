@@ -31,6 +31,11 @@ SHEET_SPRINT_PLANNING = "Sprint Planning"
 
 _BOARD_IDS = [74, 212]  # DELI=74, NFR=212
 
+# Mirrors the threshold in dbt_project/models/intermediate/int_sprint_velocity.sql:30
+# — an active sprint is "late enough that open work likely rolls over" once its
+# calendar duration is at least 70 % elapsed.
+_ACTIVE_SPRINT_ROLLOVER_THRESHOLD = 0.70
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper
@@ -433,6 +438,29 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
         con.close()
         return
 
+    # Per board: also pick up the active sprint if it's at least 70 % elapsed.
+    # Open issues from that sprint are surfaced as rollover candidates under the
+    # *future* sprint's name (include=FALSE) so the user can opt-in to them.
+    # Threshold mirrors int_sprint_velocity.sql:28-30 verbatim.
+    active_rollover_sources: dict[int, tuple] = {}  # board_id → (sprint_id, sprint_name)
+    for board_id in _BOARD_IDS:
+        if board_id not in target_sprints:
+            continue  # no future sprint to roll into
+        row = con.execute(
+            """
+            SELECT sprint_id, sprint_name
+            FROM raw.raw_jira_sprints
+            WHERE board_id = ? AND state = 'active'
+              AND start_date IS NOT NULL AND end_date IS NOT NULL
+              AND (CURRENT_DATE - start_date::DATE)::DOUBLE
+                  / NULLIF((end_date::DATE - start_date::DATE)::DOUBLE, 0) >= ?
+            LIMIT 1
+            """,
+            [board_id, _ACTIVE_SPRINT_ROLLOVER_THRESHOLD],
+        ).fetchone()
+        if row:
+            active_rollover_sources[board_id] = row
+
     # board_id → board_key
     try:
         board_map: dict[int, str] = {
@@ -466,7 +494,9 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
     except Exception:
         default_subteam_map = {"NFR": "Infra"}
 
-    # Fetch issues for each target sprint
+    # Fetch issues for each target sprint. Tuple shape:
+    #   (board_id, sheet_sprint_name, is_rollover, issue_key, summary,
+    #    story_points, t_shirt_size, status, labels, is_subtask, parent_key)
     all_issues: list[tuple] = []
     for board_id, (sprint_id, sprint_name, _) in target_sprints.items():
         rows = con.execute(
@@ -480,7 +510,41 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
             [sprint_id, board_id],
         ).fetchall()
         for row in rows:
-            all_issues.append((board_id, sprint_name) + row)
+            all_issues.append((board_id, sprint_name, False) + row)
+
+    # Active-sprint rollover candidates: still-open issues (To Do + In Progress)
+    # from an active sprint past the 70 % threshold, tagged with the *future*
+    # sprint name so they flow through the existing retention/append/refresh
+    # logic and land in mart_sprint_plan's planned-points totals once the user
+    # opts in by ticking include.
+    for board_id, (active_sprint_id, _active_sprint_name) in active_rollover_sources.items():
+        future_sprint_name = target_sprints[board_id][1]
+        rows = con.execute(
+            """
+            SELECT issue_key, summary, story_points, t_shirt_size, status, labels,
+                   is_subtask, parent_key
+            FROM raw.raw_jira_issues
+            WHERE sprint_id = ? AND board_id = ?
+              AND status_category NOT IN ('done', 'cancelled')
+            """,
+            [active_sprint_id, board_id],
+        ).fetchall()
+        for row in rows:
+            all_issues.append((board_id, future_sprint_name, True) + row)
+
+    # Sprint names that exist in Jira but are no longer in state='future' — rows in
+    # the sheet tagged with these names are past-target leftovers from a previous
+    # run when the sprint was the future target. We delete them on the next prepop
+    # so the Sprint Plan output only reflects the current planning target. Sprint
+    # names that don't exist in raw_jira_sprints at all (e.g. typos, manual entries)
+    # are left alone — we only act on sprints we have ground truth for.
+    past_target_sprint_names: set[str] = {
+        row[0]
+        for row in con.execute(
+            "SELECT sprint_name FROM raw.raw_jira_sprints WHERE state != 'future'"
+        ).fetchall()
+        if row[0]
+    }
 
     con.close()
 
@@ -503,7 +567,7 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
     # Pass 1: per (sprint_name, parent_key), record whether any subtask is labelled.
     parents_with_labelled_subtask: set[tuple[str, str]] = set()
     for row in all_issues:
-        _, sprint_name, _, _, _, _, _, labels, is_subtask, parent_key = row
+        _, sprint_name, _, _, _, _, _, _, labels, is_subtask, parent_key = row
         if is_subtask and parent_key and _first_label_subteam(labels) is not None:
             parents_with_labelled_subtask.add((sprint_name, parent_key))
 
@@ -512,11 +576,17 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
     # Row index in the sheet = position in `existing` + 2 (1-based, header row 1).
     existing = gsheets.read_input_sheet(SHEET_SPRINT_PLANNING)
     # Keep the FIRST occurrence per (issue_key, sprint_name) as canonical; any later
-    # occurrences are duplicates queued for deletion as orphans.
+    # occurrences are duplicates queued for deletion as orphans. Rows whose issue_key
+    # is blank are skipped entirely — they're sheet noise (e.g. leftover from manual
+    # paste), not real planning rows, and would otherwise all collide on the empty
+    # key and pile into duplicate_rows.
     existing_by_key: dict[tuple, tuple[int, dict]] = {}
     duplicate_rows: list[int] = []
     for idx, r in enumerate(existing):
-        key = (r.get("issue_key"), r.get("sprint_name"))
+        issue_key_val = (r.get("issue_key") or "").strip()
+        if not issue_key_val:
+            continue
+        key = (issue_key_val, r.get("sprint_name"))
         sheet_row = idx + 2
         if key in existing_by_key:
             duplicate_rows.append(sheet_row)
@@ -548,7 +618,7 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
     kept_keys: set[tuple] = set()  # (issue_key, sprint_name) surviving the retention rule
     for row in all_issues:
         (
-            board_id, sprint_name, issue_key, summary,
+            board_id, sprint_name, is_rollover, issue_key, summary,
             story_points, t_shirt_size, status, labels, is_subtask, parent_key,
         ) = row
         board_key = board_map.get(board_id, str(board_id))
@@ -590,20 +660,28 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
             continue
 
         issue_link = f'=HYPERLINK("{jira_base_url}/browse/{issue_key}", "{issue_key}")'
+        include_default = "FALSE" if is_rollover else "TRUE"
         new_rows.append([
             issue_link, sprint_name, board_key, subteam, summary or "",
-            status or "", planned_points if planned_points is not None else "", "TRUE",
+            status or "", planned_points if planned_points is not None else "", include_default,
         ])
 
-    # Orphan rows: sheet entries for a target sprint whose (issue_key, sprint_name) no
-    # longer appears in raw_jira_issues for that sprint (issue moved to another project,
-    # deleted, or supplanted by a labelled subtask under the retention rule). Duplicate
-    # rows (extra copies of an (issue_key, sprint_name) already represented by an earlier
-    # row) are always orphans regardless of whether they target a current sprint.
+    # Orphan rows fall into three categories, all deleted:
+    #   1. Duplicates: extra copies of an (issue_key, sprint_name) already represented
+    #      by an earlier row.
+    #   2. Current-target orphans: a row's sprint_name IS the current target for its
+    #      board, but the issue is no longer in that sprint (moved to another project,
+    #      deleted, or supplanted by a labelled subtask under the retention rule).
+    #   3. Past-target orphans: the row's sprint_name corresponds to a Jira sprint
+    #      that has transitioned out of state='future' (active or closed). These
+    #      were valid planning rows once but are now stale and clutter the mart.
     orphan_rows: list[int] = duplicate_rows + [
         sheet_row
         for (issue_key, sprint_name), (sheet_row, _) in existing_by_key.items()
-        if sprint_name in target_sprint_names and (issue_key, sprint_name) not in kept_keys
+        if (
+            (sprint_name in target_sprint_names and (issue_key, sprint_name) not in kept_keys)
+            or sprint_name in past_target_sprint_names
+        )
     ]
 
     # Order matters: cell updates use the original row indices, so apply them BEFORE
