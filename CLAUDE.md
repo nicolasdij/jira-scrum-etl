@@ -63,6 +63,18 @@ Google Sheets (input) ──► Dagster assets ──► DuckDB raw tables
                                     Dagster export assets ──► Google Sheets (output)
 ```
 
+### Google Sheet structure
+
+`GSHEETS_INPUT_SPREADSHEET_ID` and `GSHEETS_OUTPUT_SPREADSHEET_ID` typically point at the same workbook. Tabs are organised into sections, each fronted by a navigation "header" tab whose name ends with ` >`:
+
+- **`ETL Input >`** — `Time Off`, `Public Holidays`, `Team Splits`. The first two are pure manual inputs; `Team Splits` is hybrid — `gsheets_team_splits_prepopulator` drafts skeleton rows weekly and the user fills `days_allocated`.
+- **`ETL Output >`** — `Member Availability`, `Sprint History`, `Capacity Plan`, `Sprint Planning`, `Sprint Plan`. All but `Sprint Planning` are written by `exports.py` from dbt marts; `Sprint Planning` is hybrid — `gsheets_sprint_planning_prepopulator` drafts one row per candidate issue and the user edits `planned_points` and `include`.
+- **`SHEET Analysis >`** — sheet-side cross-checks (formulas inside the sheet, no Dagster involvement): `Validation`.
+
+(There is also an empty `Hibrid >` header tab between the input and output sections — a placeholder, currently unused.)
+
+Each header tab carries hyperlinks in column A to its subsection tabs and short purpose descriptions in column B; the rest of the cells are unused. Dagster references the tabs by exact name via constants at the top of `dagster_pipeline/assets/gsheets.py` (`SHEET_TIME_OFF`, `SHEET_HOLIDAYS`, `SHEET_TEAM_SPLITS`, `SHEET_SPRINT_PLANNING`) and via the `exports.py` mapping — renaming a tab in the sheet requires updating the corresponding constant.
+
 ### Layer Breakdown
 
 **`dagster_pipeline/assets/`** — Python extraction and export:
