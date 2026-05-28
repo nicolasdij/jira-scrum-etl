@@ -705,6 +705,15 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
     elif not cell_updates and not orphan_rows:
         context.log.info("All issues for target sprints already present in sheet; no refresh needed.")
 
+    # Sort the data rows by (board, subteam, status) ascending. Runs unconditionally
+    # so manual additions stay in order too. Sheets sortRange reorders in-place,
+    # preserving HYPERLINK formulas and manual edits in the planned_points/include
+    # columns. Column positions mirror the header order: C=board, D=subteam, F=status.
+    gsheets.sort_input_sheet(
+        SHEET_SPRINT_PLANNING,
+        [(3, "asc"), (4, "asc"), (6, "asc")],
+    )
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Asset: raw_sprint_planning

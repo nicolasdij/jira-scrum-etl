@@ -159,6 +159,52 @@ class GSheetsResource(ConfigurableResource):
             + (f" (skipped {skipped} due to API errors)" if skipped else "")
         )
 
+    def sort_input_sheet(
+        self,
+        sheet_name: str,
+        sort_specs: list[tuple[int, str]],
+        *,
+        header_rows: int = 1,
+    ) -> None:
+        """Sort the data rows of *sheet_name* in-place using Sheets API sortRange.
+
+        Formulas, formatting, and unaffected columns are preserved (this is a row
+        reorder, not an overwrite). Empty cells in the sort-key columns are placed
+        at the bottom by the API in both ASC and DESC order, so blank trailing rows
+        in the sheet's allocated grid stay at the bottom.
+
+        sort_specs: list of (1-based column index, 'asc'|'desc') tuples; applied
+        as primary, secondary, tertiary keys in order.
+        """
+        log = get_dagster_logger()
+        client = self._client()
+        wb = client.open_by_key(self.input_spreadsheet_id)
+        ws = wb.worksheet(sheet_name)
+        requests = [{
+            "sortRange": {
+                "range": {
+                    "sheetId": ws.id,
+                    "startRowIndex": header_rows,
+                    "endRowIndex": ws.row_count,
+                    "startColumnIndex": 0,
+                    "endColumnIndex": ws.col_count,
+                },
+                "sortSpecs": [
+                    {
+                        "dimensionIndex": col - 1,
+                        "sortOrder": (
+                            "ASCENDING"
+                            if str(order).lower().startswith("asc")
+                            else "DESCENDING"
+                        ),
+                    }
+                    for col, order in sort_specs
+                ],
+            }
+        }]
+        wb.batch_update({"requests": requests})
+        log.info(f"Sorted '{sheet_name}' by columns {sort_specs}")
+
     def batch_update_input_sheet(
         self, sheet_name: str, updates: list[dict[str, Any]]
     ) -> None:
