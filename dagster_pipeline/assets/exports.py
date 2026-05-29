@@ -170,15 +170,18 @@ def gsheets_sprint_plan_export(
         """
         SELECT
             sprint_name,
+            sprint_state,
+            sprint_start_date,
             board,
             subteam,
-            planned_points,
-            subteam_capacity,
-            included_issues,
             total_available_days,
-            ideal_days
+            ideal_days,
+            included_issues,
+            subteam_capacity,
+            planned_points,
+            subteam_capacity - planned_points AS difference
         FROM marts.mart_sprint_plan
-        ORDER BY sprint_name, subteam
+        ORDER BY sprint_start_date, board, subteam
         """,
     )
 
