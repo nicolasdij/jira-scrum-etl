@@ -32,7 +32,7 @@ from google.oauth2.service_account import Credentials
 
 load_dotenv()
 
-SHEET_SPRINT_PLANNING = "Sprint Planning"
+SHEET_SPRINT_PLANNING = "Sprint Items"
 _SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive.readonly",

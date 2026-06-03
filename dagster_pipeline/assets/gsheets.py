@@ -27,7 +27,7 @@ from dagster_pipeline.resources.gsheets_resource import GSheetsResource
 SHEET_TIME_OFF = "Time Off"
 SHEET_HOLIDAYS = "Public Holidays"
 SHEET_TEAM_SPLITS = "Team Splits"
-SHEET_SPRINT_PLANNING = "Sprint Planning"
+SHEET_SPRINT_PLANNING = "Sprint Items"
 
 _BOARD_IDS = [74, 212]  # DELI=74, NFR=212
 
@@ -397,7 +397,7 @@ def gsheets_team_splits_prepopulator(
     ],
     op_tags={"dagster/concurrency_key": "duckdb"},
     description=(
-        "Inserts skeleton rows into the Sprint Planning sheet for the immediately following "
+        "Inserts skeleton rows into the Sprint Items sheet for the immediately following "
         "sprint per board (first future sprint by start date). "
         "Existing rows: blank planned_points / subteam / status cells are refreshed "
         "from source; non-blank cells (manual edits) are preserved. Rows for a target "
@@ -725,7 +725,7 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
     group_name="raw_gsheets",
     deps=["gsheets_sprint_planning_prepopulator"],
     op_tags={"dagster/concurrency_key": "duckdb"},
-    description="Per-sprint issue planning data read from the Sprint Planning Google Sheet tab.",
+    description="Per-sprint issue planning data read from the Sprint Items Google Sheet tab.",
 )
 def raw_sprint_planning(context, gsheets: GSheetsResource) -> None:
     records = gsheets.read_input_sheet(SHEET_SPRINT_PLANNING)
