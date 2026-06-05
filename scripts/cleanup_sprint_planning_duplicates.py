@@ -1,4 +1,4 @@
-"""One-time cleanup: remove duplicate, blank, and past-target rows from the Sprint Planning sheet.
+"""One-time cleanup: remove duplicate, blank, and past-target rows from the Sprint Items sheet.
 
 Three row types are removed:
   1. Duplicates — rows sharing the same (issue_key, sprint_name) as an earlier row.

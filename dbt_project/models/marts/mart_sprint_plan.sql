@@ -3,7 +3,7 @@
 -- Planned/committed story points vs subteam capacity for two target sprints per
 -- board: the currently active sprint and the earliest future sprint.
 --
--- Future rows  → planned points come from the Sprint Planning sheet
+-- Future rows  → planned points come from the Sprint Items sheet
 --                (stg_sprint_planning, gated by include = TRUE).
 -- Active rows  → planned points come straight from Jira via int_effective_issues
 --                (no opt-in: anything committed in the sprint counts).

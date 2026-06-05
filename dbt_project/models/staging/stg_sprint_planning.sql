@@ -1,6 +1,6 @@
 {{ config(materialized='view') }}
 -- stg_sprint_planning
--- Clean sprint planning rows from the Sprint Planning input sheet.
+-- Clean sprint planning rows from the Sprint Items input sheet.
 -- planned_points is cast to DOUBLE; include is normalised to BOOLEAN.
 
 WITH source AS (

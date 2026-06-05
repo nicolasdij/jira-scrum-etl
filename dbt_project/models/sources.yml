@@ -16,4 +16,4 @@ sources:
       - name: raw_team_splits
         description: "Per-sprint, per-member board/sub-team allocation, read from the Google Sheets input spreadsheet."
       - name: raw_sprint_planning
-        description: "Per-sprint issue planning data, read from the Sprint Planning Google Sheets tab."
+        description: "Per-sprint issue planning data, read from the Sprint Items Google Sheets tab."

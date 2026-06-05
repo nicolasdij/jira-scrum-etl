@@ -31,7 +31,7 @@ def _effective_state(states: list[str]) -> str:
 # limits runs sharing this tag to 1 at a time, which is what prevents:
 #   - DuckDB single-writer lock contention across runs
 #   - concurrent prepop runs racing on gspread append_rows (the bug that left
-#     100 blank rows interleaved with real data in the Sprint Planning sheet)
+#     100 blank rows interleaved with real data in the Sprint Items sheet)
 # Op-level concurrency tags only serialise ops *within* a run, so they're
 # necessary but not sufficient on their own.
 _DUCKDB_RUN_TAGS = {"dagster/concurrency_key": "duckdb"}
@@ -75,7 +75,7 @@ team_splits_prepopulate_job = define_asset_job(
     description="Insert skeleton rows into the Team Splits sheet for future sprints.",
 )
 
-# Refresh Sprint Plan tab after editing the Sprint Planning input sheet.
+# Refresh Sprint Plan tab after editing the Sprint Items input sheet.
 # Runs: raw_sprint_planning → stg_sprint_planning → mart_sprint_plan → gsheets_sprint_plan_export
 sprint_plan_update_job = define_asset_job(
     name="sprint_plan_update_job",
@@ -87,14 +87,14 @@ sprint_plan_update_job = define_asset_job(
     ),
     tags=_DUCKDB_RUN_TAGS,
     description=(
-        "Re-reads the Sprint Planning input sheet and rebuilds the Sprint Plan output tab. "
-        "Run this after editing planned_points or include values in the Sprint Planning sheet."
+        "Re-reads the Sprint Items input sheet and rebuilds the Sprint Plan output tab. "
+        "Run this after editing planned_points or include values in the Sprint Items sheet."
     ),
 )
 
 # One-click sync after editing a Jira issue (e.g. setting a t-shirt size):
 # re-fetches the chosen sprint's issues from Jira, refreshes blank cells in the
-# Sprint Planning sheet, and rebuilds the Sprint Plan output tab.
+# Sprint Items sheet, and rebuilds the Sprint Plan output tab.
 # When launched, pick the future sprint's start_date (YYYY-MM-DD) as the partition key.
 sprint_planning_sync_job = define_asset_job(
     name="sprint_planning_sync_job",
@@ -110,7 +110,7 @@ sprint_planning_sync_job = define_asset_job(
     description=(
         "End-to-end sync after a Jira edit: re-fetches raw_jira_issues for the chosen "
         "sprint-date partition, refreshes blank planned_points/subteam/status cells in "
-        "the Sprint Planning sheet, then rebuilds the Sprint Plan output tab. "
+        "the Sprint Items sheet, then rebuilds the Sprint Plan output tab. "
         "Pick the future sprint's start_date (YYYY-MM-DD) as the partition when launching."
     ),
 )
