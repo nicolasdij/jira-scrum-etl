@@ -127,6 +127,8 @@ The prepopulator is mostly non-destructive: it appends new rows and **refreshes 
 
 **One-click sync after editing in Jira**: `sprint_planning_sync_job` chains `raw_jira_issues` (partitioned) → `gsheets_sprint_planning_prepopulator` → `raw_sprint_planning` → `stg_sprint_planning` → `mart_sprint_plan` → `gsheets_sprint_plan_export`. Launch from the Dagster UI, pick the future sprint's `start_date` (YYYY-MM-DD) as the partition, and it re-fetches that sprint's issues from Jira, refreshes blank cells / removes orphan rows in the Sprint Items sheet, and rebuilds the Sprint Plan output tab in one run.
 
+**One-click sync after editing availability inputs**: `capacity_inputs_sync_job` chains the three availability input tabs into the dependent outputs: `raw_time_off` / `raw_public_holidays` / `raw_team_splits` → `stg_*` → `int_member_sprint_availability` → `int_subteam_sprint_capacity_pct` → `mart_capacity_planning` + `mart_sprint_plan` + `mart_member_availability` → `gsheets_capacity_plan_export` + `gsheets_sprint_plan_export` + `gsheets_member_availability_export`. Run this after editing Time Off, Public Holidays, or Team Splits so subteam capacity (and the Sprint Plan headroom column) reflects the new availability, and the Member Availability reference tab stays in sync. `mart_rolling_velocity` is intentionally left out — it depends on Jira data, not on these inputs.
+
 ### Schedules and Jobs (Madrid timezone)
 
 | Schedule / Job | What It Does |
@@ -137,6 +139,7 @@ The prepopulator is mostly non-destructive: it appends new rows and **refreshes 
 | Hourly sensor | Trigger full pipeline on sprint close |
 | `sprint_plan_update_job` (on-demand) | Re-reads Sprint Items sheet → rebuilds `mart_sprint_plan` → updates Sprint Plan tab |
 | `sprint_planning_sync_job` (on-demand, partitioned) | Re-fetches `raw_jira_issues` for the picked sprint date, refreshes/cleans the Sprint Items sheet, and rebuilds the Sprint Plan output tab in one run |
+| `capacity_inputs_sync_job` (on-demand) | Re-reads Time Off / Public Holidays / Team Splits → rebuilds `mart_capacity_planning`, `mart_sprint_plan`, and `mart_member_availability` → updates Capacity Plan, Sprint Plan, and Member Availability tabs |
 
 ## One-Time / Maintenance Scripts
 

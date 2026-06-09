@@ -92,6 +92,43 @@ sprint_plan_update_job = define_asset_job(
     ),
 )
 
+# Refresh Capacity Plan, Sprint Plan, and Member Availability tabs after editing
+# the Time Off, Public Holidays, or Team Splits input sheets — the three inputs
+# that drive member availability and therefore subteam capacity.
+# Runs: raw_time_off / raw_public_holidays / raw_team_splits
+#       → stg_* → int_member_sprint_availability → int_subteam_sprint_capacity_pct
+#       → mart_capacity_planning + mart_sprint_plan + mart_member_availability
+#       → gsheets_capacity_plan_export + gsheets_sprint_plan_export + gsheets_member_availability_export
+# mart_rolling_velocity is unaffected by these inputs, so it isn't rebuilt;
+# stg_sprint_planning is left alone too (its outputs feed mart_sprint_plan but
+# don't depend on the capacity inputs).
+capacity_inputs_sync_job = define_asset_job(
+    name="capacity_inputs_sync_job",
+    selection=AssetSelection.assets(
+        AssetKey(["raw", "raw_time_off"]),
+        AssetKey(["raw", "raw_public_holidays"]),
+        AssetKey(["raw", "raw_team_splits"]),
+        AssetKey(["staging", "stg_time_off"]),
+        AssetKey(["staging", "stg_public_holidays"]),
+        AssetKey(["staging", "stg_team_splits"]),
+        AssetKey(["intermediate", "int_member_sprint_availability"]),
+        AssetKey(["intermediate", "int_subteam_sprint_capacity_pct"]),
+        AssetKey(["marts", "mart_capacity_planning"]),
+        AssetKey(["marts", "mart_sprint_plan"]),
+        AssetKey(["marts", "mart_member_availability"]),
+        "gsheets_capacity_plan_export",
+        "gsheets_sprint_plan_export",
+        "gsheets_member_availability_export",
+    ),
+    tags=_DUCKDB_RUN_TAGS,
+    description=(
+        "Re-reads Time Off / Public Holidays / Team Splits input sheets and rebuilds "
+        "the Capacity Plan, Sprint Plan, and Member Availability output tabs. Run this "
+        "after editing any of those three sheets so subteam capacity (and the Sprint "
+        "Plan headroom column) reflects the new availability."
+    ),
+)
+
 # One-click sync after editing a Jira issue (e.g. setting a t-shirt size):
 # re-fetches the chosen sprint's issues from Jira, refreshes blank cells in the
 # Sprint Items sheet, and rebuilds the Sprint Plan output tab.

@@ -28,6 +28,7 @@ from dagster_pipeline.schedules import (
     team_splits_prepopulate_job,
     sprint_plan_update_job,
     sprint_planning_sync_job,
+    capacity_inputs_sync_job,
 )
 
 import pathlib
@@ -107,6 +108,7 @@ defs = Definitions(
         raw_jira_issues_job,
         sprint_plan_update_job,
         sprint_planning_sync_job,
+        capacity_inputs_sync_job,
     ],
     schedules=[weekly_tuesday_schedule, team_splits_monday_schedule],
     sensors=[jira_sprint_closed_sensor, raw_jira_issues_partition_sensor],
