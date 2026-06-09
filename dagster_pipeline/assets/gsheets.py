@@ -684,34 +684,24 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
         )
     ]
 
-    # Order matters: cell updates use the original row indices, so apply them BEFORE
-    # any deletion shifts row numbers. Appends come last and aren't affected.
-    if cell_updates:
+    # All four edits go through one batchUpdate so we pay one HTTP round-trip
+    # (plus one client/open/worksheet lookup) instead of four. Server-side order
+    # is fixed by batch_modify_input_sheet: updates → deletes (desc) → appends → sort.
+    # The sort runs unconditionally so manual additions also stay in order.
+    # Column positions mirror the header order: C=board, D=subteam, F=status.
+    if cell_updates or orphan_rows or new_rows:
         context.log.info(
-            f"Refreshing {len(cell_updates)} blank cell(s) in '{SHEET_SPRINT_PLANNING}'"
+            f"'{SHEET_SPRINT_PLANNING}': {len(cell_updates)} blank cell refresh(es), "
+            f"{len(orphan_rows)} orphan row delete(s), {len(new_rows)} new row(s)"
         )
-        gsheets.batch_update_input_sheet(SHEET_SPRINT_PLANNING, cell_updates)
-
-    if orphan_rows:
-        context.log.info(
-            f"Deleting {len(orphan_rows)} orphan row(s) from '{SHEET_SPRINT_PLANNING}' "
-            f"(issues no longer in their target sprint)"
-        )
-        gsheets.delete_input_sheet_rows(SHEET_SPRINT_PLANNING, orphan_rows)
-
-    if new_rows:
-        context.log.info(f"Appending {len(new_rows)} issue rows to '{SHEET_SPRINT_PLANNING}'")
-        gsheets.append_rows_to_input_sheet(SHEET_SPRINT_PLANNING, new_rows)
-    elif not cell_updates and not orphan_rows:
-        context.log.info("All issues for target sprints already present in sheet; no refresh needed.")
-
-    # Sort the data rows by (board, subteam, status) ascending. Runs unconditionally
-    # so manual additions stay in order too. Sheets sortRange reorders in-place,
-    # preserving HYPERLINK formulas and manual edits in the planned_points/include
-    # columns. Column positions mirror the header order: C=board, D=subteam, F=status.
-    gsheets.sort_input_sheet(
+    else:
+        context.log.info("All issues for target sprints already present in sheet; sort only.")
+    gsheets.batch_modify_input_sheet(
         SHEET_SPRINT_PLANNING,
-        [(3, "asc"), (4, "asc"), (6, "asc")],
+        cell_updates=cell_updates,
+        delete_row_indices=orphan_rows,
+        append_rows=new_rows,
+        sort_specs=[(3, "asc"), (4, "asc"), (6, "asc")],
     )
 
 
