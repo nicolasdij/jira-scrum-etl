@@ -18,6 +18,8 @@ from dagster_pipeline.assets import exports, gsheets, jira
 from dagster_pipeline.resources.gsheets_resource import GSheetsResource
 from dagster_pipeline.resources.jira_resource import JiraResource
 from dagster_pipeline.schedules import (
+    cleanup_monthly_schedule,
+    cleanup_old_runs_job,
     jira_sprint_closed_sensor,
     raw_jira_issues_job,
     raw_jira_issues_partition_sensor,
@@ -109,7 +111,8 @@ defs = Definitions(
         sprint_plan_update_job,
         sprint_planning_sync_job,
         capacity_inputs_sync_job,
+        cleanup_old_runs_job,
     ],
-    schedules=[weekly_tuesday_schedule, team_splits_monday_schedule],
+    schedules=[weekly_tuesday_schedule, team_splits_monday_schedule, cleanup_monthly_schedule],
     sensors=[jira_sprint_closed_sensor, raw_jira_issues_partition_sensor],
 )

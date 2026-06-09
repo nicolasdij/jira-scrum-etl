@@ -9,9 +9,12 @@ from dagster import (
     AssetSelection,
     DefaultScheduleStatus,
     RunRequest,
+    RunsFilter,
     ScheduleDefinition,
     SkipReason,
     define_asset_job,
+    job,
+    op,
     sensor,
 )
 
@@ -92,13 +95,13 @@ sprint_plan_update_job = define_asset_job(
     ),
 )
 
-# Refresh Capacity Plan, Sprint Plan, and Member Availability tabs after editing
-# the Time Off, Public Holidays, or Team Splits input sheets — the three inputs
-# that drive member availability and therefore subteam capacity.
+# Refresh Capacity Plan and Sprint Plan tabs after editing the Time Off,
+# Public Holidays, or Team Splits input sheets — the three inputs that drive
+# member availability and therefore subteam capacity.
 # Runs: raw_time_off / raw_public_holidays / raw_team_splits
 #       → stg_* → int_member_sprint_availability → int_subteam_sprint_capacity_pct
-#       → mart_capacity_planning + mart_sprint_plan + mart_member_availability
-#       → gsheets_capacity_plan_export + gsheets_sprint_plan_export + gsheets_member_availability_export
+#       → mart_capacity_planning → mart_sprint_plan
+#       → gsheets_capacity_plan_export + gsheets_sprint_plan_export
 # mart_rolling_velocity is unaffected by these inputs, so it isn't rebuilt;
 # stg_sprint_planning is left alone too (its outputs feed mart_sprint_plan but
 # don't depend on the capacity inputs).
@@ -128,6 +131,47 @@ capacity_inputs_sync_job = define_asset_job(
         "Plan headroom column) reflects the new availability."
     ),
 )
+
+# Monthly cleanup of Dagster run history older than 30 days. Deletes the run
+# row in history/runs.db, the per-run event log DB (history/runs/<run_id>.db),
+# and compute logs under storage/<run_id>/. Does not touch DuckDB or dbt
+# artifacts, so no duckdb concurrency tag is needed. Asset materialisations
+# emitted by deleted runs go with them — including dbt model materialisations —
+# so any asset whose last materialisation is older than 30 days will appear
+# "never materialised" in the UI until the next pipeline run rematerialises it.
+_CLEANUP_RUN_RETENTION_DAYS = 30
+
+
+@op(description="Delete Dagster runs older than the retention window.")
+def cleanup_old_runs_op(context) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=_CLEANUP_RUN_RETENTION_DAYS)
+    instance = context.instance
+
+    deleted = 0
+    while True:
+        runs = instance.get_runs(
+            filters=RunsFilter(updated_before=cutoff),
+            limit=200,
+        )
+        if not runs:
+            break
+        for run in runs:
+            instance.delete_run(run.run_id)
+            deleted += 1
+        context.log.info(f"Deleted {deleted} runs so far...")
+
+    context.log.info(
+        f"Cleanup complete. Deleted {deleted} runs older than "
+        f"{_CLEANUP_RUN_RETENTION_DAYS} days (cutoff: {cutoff.isoformat()})."
+    )
+
+
+@job(description="Monthly cleanup of Dagster run history older than 30 days.")
+def cleanup_old_runs_job():
+    cleanup_old_runs_op()
+
 
 # One-click sync after editing a Jira issue (e.g. setting a t-shirt size):
 # re-fetches the chosen sprint's issues from Jira, refreshes blank cells in the
@@ -166,6 +210,20 @@ weekly_tuesday_schedule = ScheduleDefinition(
     description=(
         "Full pipeline run every Tuesday at ~08:00 Madrid time. "
         "Produces the capacity plan for the sprint that just started."
+    ),
+)
+
+# Monthly run-history cleanup. 1st of each month at 05:00 UTC (~06:00–07:00 Madrid).
+# Deletes Dagster runs older than _CLEANUP_RUN_RETENTION_DAYS.
+cleanup_monthly_schedule = ScheduleDefinition(
+    name="cleanup_old_runs_monthly",
+    job=cleanup_old_runs_job,
+    cron_schedule="0 5 1 * *",
+    default_status=DefaultScheduleStatus.RUNNING,
+    description=(
+        "On the 1st of each month, delete Dagster run records, event logs, and "
+        "compute logs older than 30 days to keep dagster_home/history/ from growing "
+        "unbounded."
     ),
 )
 
