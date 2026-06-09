@@ -42,7 +42,6 @@ active_planning_velocity AS (
         subteam,
         rolling_avg_velocity,
         sprint_name        AS last_velocity_sprint_name,
-        sprint_state       AS last_velocity_sprint_state,
         sprints_in_window
     FROM {{ ref('mart_rolling_velocity') }}
     WHERE sprint_state = 'closed'
@@ -56,7 +55,6 @@ future_planning_velocity AS (
         subteam,
         rolling_avg_velocity,
         sprint_name        AS last_velocity_sprint_name,
-        sprint_state       AS last_velocity_sprint_state,
         sprints_in_window
     FROM {{ ref('mart_rolling_velocity') }}
     ORDER BY subteam, sprint_start_date DESC
@@ -80,6 +78,7 @@ target_capacity AS (
 SELECT
     tc.sprint_name                                              AS target_sprint,
     strftime(tc.sprint_start_date::DATE, '%Y-%m-%d')            AS sprint_start_date,
+    tc.sprint_state                                             AS sprint_state,
     tc.subteam,
     COALESCE(apv.rolling_avg_velocity, fpv.rolling_avg_velocity)
                                                                 AS rolling_avg_velocity,
@@ -91,9 +90,7 @@ SELECT
     FLOOR(COALESCE(apv.rolling_avg_velocity, fpv.rolling_avg_velocity) * tc.capacity_pct)
                                                                 AS recommended_capacity_points,
     COALESCE(apv.last_velocity_sprint_name, fpv.last_velocity_sprint_name)
-                                                                AS last_velocity_sprint_name,
-    COALESCE(apv.last_velocity_sprint_state, fpv.last_velocity_sprint_state)
-                                                                AS last_velocity_sprint_state
+                                                                AS last_velocity_sprint_name
 FROM target_capacity tc
 LEFT JOIN active_planning_velocity apv
     ON apv.board_id = tc.board_id
