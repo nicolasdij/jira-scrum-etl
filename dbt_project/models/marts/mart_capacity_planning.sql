@@ -78,7 +78,7 @@ target_capacity AS (
 SELECT
     tc.sprint_name                                              AS target_sprint,
     strftime(tc.sprint_start_date::DATE, '%Y-%m-%d')            AS sprint_start_date,
-    tc.sprint_state                                             AS sprint_state,
+    tc.sprint_state                                             AS target_sprint_state,
     tc.subteam,
     COALESCE(apv.rolling_avg_velocity, fpv.rolling_avg_velocity)
                                                                 AS rolling_avg_velocity,

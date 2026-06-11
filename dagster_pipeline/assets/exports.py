@@ -58,7 +58,7 @@ def gsheets_capacity_plan_export(
         SELECT
             target_sprint,
             sprint_start_date,
-            sprint_state,
+            target_sprint_state AS sprint_state,
             subteam,
             FLOOR(rolling_avg_velocity) as rolling_avg_velocity,
             ROUND(next_sprint_availability_pct * 100, 0) || '%' AS availability_pct,

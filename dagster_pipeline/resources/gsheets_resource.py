@@ -22,7 +22,7 @@ _SCOPES = [
 ]
 
 
-@functools.lru_cache(maxsize=4)
+@functools.cache
 def _build_client(credentials_path: str) -> gspread.Client:
     """Authorise a gspread client once per (process, credentials_path).
 
@@ -31,7 +31,9 @@ def _build_client(credentials_path: str) -> gspread.Client:
     op alone fires 5 sheet operations back-to-back, so re-authorising each
     time was costing ~3–5 s before any data moved. Caching is per-process,
     which matches Dagster's one-subprocess-per-run model: a single run reuses
-    one authorised session across all its gsheets calls.
+    one authorised session across all its gsheets calls. Cache is unbounded
+    (functools.cache) because the number of distinct credentials paths in a
+    process is bounded by configuration — typically one.
     """
     creds = Credentials.from_service_account_file(credentials_path, scopes=_SCOPES)
     return gspread.authorize(creds)

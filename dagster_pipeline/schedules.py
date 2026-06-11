@@ -41,15 +41,31 @@ def _effective_state(states: list[str]) -> str:
 # necessary but not sufficient on their own.
 _DUCKDB_RUN_TAGS = {"dagster/concurrency_key": "duckdb"}
 
+
+def _duckdb_job(*, name, selection, description):
+    """define_asset_job pre-tagged with _DUCKDB_RUN_TAGS.
+
+    Every job in this file materialises at least one DuckDB-writing asset
+    (or a gspread-writing asset that races on append_rows), so all of them
+    must carry the run-level concurrency tag. Using this wrapper instead of
+    define_asset_job(...) makes the tag impossible to forget on a new job.
+    """
+    return define_asset_job(
+        name=name,
+        selection=selection,
+        tags=_DUCKDB_RUN_TAGS,
+        description=description,
+    )
+
+
 # raw_jira_issues is partitioned per-sprint and managed by its own sensor/job below.
 _partitioned_issues = AssetSelection.assets(AssetKey(["raw", "raw_jira_issues"]))
 
 # Full pipeline: extract → dbt transform → export.
 # raw_jira_issues is excluded because it is a partitioned asset handled separately.
-full_pipeline_job = define_asset_job(
+full_pipeline_job = _duckdb_job(
     name="full_pipeline_job",
     selection=AssetSelection.all() - _partitioned_issues,
-    tags=_DUCKDB_RUN_TAGS,
     description=(
         "Full ETL run: extract from Jira and Google Sheets, run dbt transforms, "
         "write results back to Google Sheets."
@@ -57,32 +73,29 @@ full_pipeline_job = define_asset_job(
 )
 
 # On-demand extraction only (no export) — useful for mid-sprint data refresh
-extraction_only_job = define_asset_job(
+extraction_only_job = _duckdb_job(
     name="extraction_only_job",
     selection=AssetSelection.groups("raw_jira", "raw_gsheets") - _partitioned_issues,
-    tags=_DUCKDB_RUN_TAGS,
     description="Extract raw data from Jira and Google Sheets into DuckDB without running dbt.",
 )
 
 # Per-sprint partitioned job — one run per sprint partition.
-raw_jira_issues_job = define_asset_job(
+raw_jira_issues_job = _duckdb_job(
     name="raw_jira_issues_job",
     selection=_partitioned_issues,
-    tags=_DUCKDB_RUN_TAGS,
     description="Materialises a single sprint partition of raw_jira_issues.",
 )
 
 # Pre-populate team splits for upcoming sprints
-team_splits_prepopulate_job = define_asset_job(
+team_splits_prepopulate_job = _duckdb_job(
     name="team_splits_prepopulate_job",
     selection=AssetSelection.assets("gsheets_team_splits_prepopulator"),
-    tags=_DUCKDB_RUN_TAGS,
     description="Insert skeleton rows into the Team Splits sheet for future sprints.",
 )
 
 # Refresh Sprint Plan tab after editing the Sprint Items input sheet.
 # Runs: raw_sprint_planning → stg_sprint_planning → mart_sprint_plan → gsheets_sprint_plan_export
-sprint_plan_update_job = define_asset_job(
+sprint_plan_update_job = _duckdb_job(
     name="sprint_plan_update_job",
     selection=AssetSelection.assets(
         AssetKey(["raw", "raw_sprint_planning"]),
@@ -90,7 +103,6 @@ sprint_plan_update_job = define_asset_job(
         AssetKey(["marts", "mart_sprint_plan"]),
         "gsheets_sprint_plan_export",
     ),
-    tags=_DUCKDB_RUN_TAGS,
     description=(
         "Re-reads the Sprint Items input sheet and rebuilds the Sprint Plan output tab. "
         "Run this after editing planned_points or include values in the Sprint Items sheet."
@@ -107,7 +119,7 @@ sprint_plan_update_job = define_asset_job(
 # mart_rolling_velocity is unaffected by these inputs, so it isn't rebuilt;
 # stg_sprint_planning is left alone too (its outputs feed mart_sprint_plan but
 # don't depend on the capacity inputs).
-capacity_inputs_sync_job = define_asset_job(
+capacity_inputs_sync_job = _duckdb_job(
     name="capacity_inputs_sync_job",
     selection=AssetSelection.assets(
         AssetKey(["raw", "raw_time_off"]),
@@ -125,7 +137,6 @@ capacity_inputs_sync_job = define_asset_job(
         "gsheets_sprint_plan_export",
         "gsheets_member_availability_export",
     ),
-    tags=_DUCKDB_RUN_TAGS,
     description=(
         "Re-reads Time Off / Public Holidays / Team Splits input sheets and rebuilds "
         "the Capacity Plan, Sprint Plan, and Member Availability output tabs. Run this "
@@ -194,7 +205,7 @@ def cleanup_old_runs_job():
 # re-fetches the chosen sprint's issues from Jira, refreshes blank cells in the
 # Sprint Items sheet, and rebuilds the Sprint Plan output tab.
 # When launched, pick the future sprint's start_date (YYYY-MM-DD) as the partition key.
-sprint_planning_sync_job = define_asset_job(
+sprint_planning_sync_job = _duckdb_job(
     name="sprint_planning_sync_job",
     selection=AssetSelection.assets(
         AssetKey(["raw", "raw_jira_issues"]),
@@ -204,7 +215,6 @@ sprint_planning_sync_job = define_asset_job(
         AssetKey(["marts", "mart_sprint_plan"]),
         "gsheets_sprint_plan_export",
     ),
-    tags=_DUCKDB_RUN_TAGS,
     description=(
         "End-to-end sync after a Jira edit: re-fetches raw_jira_issues for the chosen "
         "sprint-date partition, refreshes blank planned_points/subteam/status cells in "
