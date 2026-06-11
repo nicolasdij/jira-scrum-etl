@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 
 from dagster import (
     AssetKey,
@@ -17,6 +18,7 @@ from dagster import (
     op,
     sensor,
 )
+from dagster._core.storage.dagster_run import FINISHED_STATUSES
 
 _STATE_RANK = {"active": 0, "future": 1, "closed": 2}
 
@@ -132,39 +134,54 @@ capacity_inputs_sync_job = define_asset_job(
     ),
 )
 
-# Monthly cleanup of Dagster run history older than 30 days. Deletes the run
-# row in history/runs.db, the per-run event log DB (history/runs/<run_id>.db),
-# and compute logs under storage/<run_id>/. Does not touch DuckDB or dbt
-# artifacts, so no duckdb concurrency tag is needed. Asset materialisations
-# emitted by deleted runs go with them — including dbt model materialisations —
-# so any asset whose last materialisation is older than 30 days will appear
-# "never materialised" in the UI until the next pipeline run rematerialises it.
+# Monthly cleanup of Dagster run history older than 30 days. Calls
+# DagsterInstance.delete_run, which removes the row in history/runs.db and the
+# associated rows in the event-log storage. Compute logs under storage/<run_id>/
+# are not touched by delete_run — if those grow large, add a separate retention
+# job for them. Only terminal runs (SUCCESS / FAILURE / CANCELED) are deleted;
+# in-progress runs are left alone even if their last-updated timestamp is older
+# than the cutoff (which can happen for genuinely stuck/zombie runs). Does not
+# touch DuckDB or dbt artifacts, so no duckdb concurrency tag is needed. Asset
+# materialisations emitted by deleted runs go with them — including dbt model
+# materialisations — so any asset whose last materialisation is older than
+# 30 days will appear "never materialised" in the UI until the next pipeline
+# run rematerialises it.
 _CLEANUP_RUN_RETENTION_DAYS = 30
 
 
 @op(description="Delete Dagster runs older than the retention window.")
 def cleanup_old_runs_op(context) -> None:
-    from datetime import datetime, timedelta, timezone
-
     cutoff = datetime.now(timezone.utc) - timedelta(days=_CLEANUP_RUN_RETENTION_DAYS)
     instance = context.instance
+    filters = RunsFilter(updated_before=cutoff, statuses=list(FINISHED_STATUSES))
 
     deleted = 0
+    failed_ids: set[str] = set()
     while True:
-        runs = instance.get_runs(
-            filters=RunsFilter(updated_before=cutoff),
-            limit=200,
-        )
+        runs = instance.get_runs(filters=filters, limit=200)
+        # Skip runs we already failed to delete this invocation so a single
+        # un-deletable run can't keep the same page coming back forever.
+        runs = [r for r in runs if r.run_id not in failed_ids]
         if not runs:
             break
+        progress_before = deleted
         for run in runs:
-            instance.delete_run(run.run_id)
-            deleted += 1
+            try:
+                instance.delete_run(run.run_id)
+                deleted += 1
+            except Exception as exc:
+                failed_ids.add(run.run_id)
+                context.log.warning(f"Failed to delete run {run.run_id}: {exc}")
         context.log.info(f"Deleted {deleted} runs so far...")
+        # Defensive guard: if a page produced zero deletions, every row in it
+        # is already in failed_ids — bail rather than re-fetch the same page.
+        if deleted == progress_before:
+            break
 
     context.log.info(
         f"Cleanup complete. Deleted {deleted} runs older than "
         f"{_CLEANUP_RUN_RETENTION_DAYS} days (cutoff: {cutoff.isoformat()})."
+        + (f" Skipped {len(failed_ids)} run(s) that errored on delete." if failed_ids else "")
     )
 
 

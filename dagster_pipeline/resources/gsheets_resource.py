@@ -12,6 +12,7 @@ from typing import Any
 import gspread
 from dagster import ConfigurableResource, get_dagster_logger
 from google.oauth2.service_account import Credentials
+from gspread.utils import a1_to_rowcol
 from pydantic import Field
 
 # Scopes required for reading and writing Sheets
@@ -36,19 +37,14 @@ def _build_client(credentials_path: str) -> gspread.Client:
     return gspread.authorize(creds)
 
 
-def _column_letter_to_index(col: str) -> int:
-    """Convert a 1+ letter column label ('A', 'AA', ...) to a 0-based index."""
-    idx = 0
-    for c in col.upper():
-        idx = idx * 26 + (ord(c) - ord("A") + 1)
-    return idx - 1
-
-
 def _parse_a1(a1: str) -> tuple[int, int]:
-    """Parse worksheet-scoped A1 ('G5') into (row_index, col_index), both 0-based."""
-    col_str = "".join(c for c in a1 if c.isalpha())
-    row_str = "".join(c for c in a1 if c.isdigit())
-    return int(row_str) - 1, _column_letter_to_index(col_str)
+    """Parse worksheet-scoped A1 ('G5') into (row_index, col_index), both 0-based.
+
+    Delegates to gspread.utils.a1_to_rowcol (which returns 1-based coords and
+    validates the input via a regex) and shifts to 0-based for the Sheets API.
+    """
+    row, col = a1_to_rowcol(a1)
+    return row - 1, col - 1
 
 
 def _to_user_entered_value(val: Any) -> dict:
@@ -182,107 +178,6 @@ class GSheetsResource(ConfigurableResource):
             ws = wb.add_worksheet(title=sheet_name, rows=1, cols=1)
         ws.append_rows(rows, value_input_option="USER_ENTERED")
         log.info(f"Appended {len(rows)} rows to '{sheet_name}' in {self.input_spreadsheet_id}")
-
-    def delete_input_sheet_rows(self, sheet_name: str, row_indices: list[int]) -> None:
-        """Delete the given 1-based row numbers from a sheet.
-
-        Indices are sorted descending and deleted one at a time so that earlier
-        deletions don't shift the row numbers of later ones. Individual delete
-        failures (e.g. when a concurrent prepop run shrank the sheet between
-        read and delete) are logged and skipped rather than aborting the batch.
-        """
-        log = get_dagster_logger()
-        unique = sorted({i for i in row_indices if i > 1}, reverse=True)  # row 1 = header
-        if not unique:
-            log.info(f"No rows to delete from '{sheet_name}'")
-            return
-        client = self._client()
-        wb = client.open_by_key(self.input_spreadsheet_id)
-        ws = wb.worksheet(sheet_name)
-        deleted = 0
-        skipped = 0
-        for idx in unique:
-            try:
-                ws.delete_rows(idx)
-                deleted += 1
-            except gspread.exceptions.APIError as exc:
-                skipped += 1
-                log.warning(
-                    f"Skipped deleting row {idx} from '{sheet_name}' "
-                    f"(likely concurrent modification): {exc}"
-                )
-        log.info(
-            f"Deleted {deleted} row(s) from '{sheet_name}' in {self.input_spreadsheet_id}"
-            + (f" (skipped {skipped} due to API errors)" if skipped else "")
-        )
-
-    def sort_input_sheet(
-        self,
-        sheet_name: str,
-        sort_specs: list[tuple[int, str]],
-        *,
-        header_rows: int = 1,
-    ) -> None:
-        """Sort the data rows of *sheet_name* in-place using Sheets API sortRange.
-
-        Formulas, formatting, and unaffected columns are preserved (this is a row
-        reorder, not an overwrite). Empty cells in the sort-key columns are placed
-        at the bottom by the API in both ASC and DESC order, so blank trailing rows
-        in the sheet's allocated grid stay at the bottom.
-
-        sort_specs: list of (1-based column index, 'asc'|'desc') tuples; applied
-        as primary, secondary, tertiary keys in order.
-        """
-        log = get_dagster_logger()
-        client = self._client()
-        wb = client.open_by_key(self.input_spreadsheet_id)
-        ws = wb.worksheet(sheet_name)
-        requests = [{
-            "sortRange": {
-                "range": {
-                    "sheetId": ws.id,
-                    "startRowIndex": header_rows,
-                    "endRowIndex": ws.row_count,
-                    "startColumnIndex": 0,
-                    "endColumnIndex": ws.col_count,
-                },
-                "sortSpecs": [
-                    {
-                        "dimensionIndex": col - 1,
-                        "sortOrder": (
-                            "ASCENDING"
-                            if str(order).lower().startswith("asc")
-                            else "DESCENDING"
-                        ),
-                    }
-                    for col, order in sort_specs
-                ],
-            }
-        }]
-        wb.batch_update({"requests": requests})
-        log.info(f"Sorted '{sheet_name}' by columns {sort_specs}")
-
-    def batch_update_input_sheet(
-        self, sheet_name: str, updates: list[dict[str, Any]]
-    ) -> None:
-        """Apply targeted single-cell updates to a sheet in one batch request.
-
-        updates: list of {"range": "G5", "value": <val>} dicts (worksheet-scoped A1).
-        """
-        log = get_dagster_logger()
-        if not updates:
-            log.info(f"No cell updates to apply to '{sheet_name}'")
-            return
-        client = self._client()
-        wb = client.open_by_key(self.input_spreadsheet_id)
-        ws = wb.worksheet(sheet_name)
-        ws.batch_update(
-            [{"range": u["range"], "values": [[u["value"]]]} for u in updates],
-            value_input_option="USER_ENTERED",
-        )
-        log.info(
-            f"Updated {len(updates)} cell(s) in '{sheet_name}' in {self.input_spreadsheet_id}"
-        )
 
     def batch_modify_input_sheet(
         self,
