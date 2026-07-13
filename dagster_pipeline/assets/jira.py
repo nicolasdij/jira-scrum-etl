@@ -38,6 +38,7 @@ def _connect_duckdb(db_path: str, retries: int = 8, delay: float = 5.0) -> duckd
 
 # Board IDs from CLAUDE.md
 BOARD_IDS = [74, 212]  # DELI=74, NFR=212
+BOARD_NAMES = {74: "DELI", 212: "NFR"}
 
 # Regex to extract key=value pairs from the Jira sprint descriptor string
 # e.g. com.atlassian...[ id=42, name=Sprint 34, state=CLOSED, startDate=..., endDate=... ]
@@ -106,7 +107,7 @@ def _resolve_sprint_from_field(field_value: Any) -> dict[str, str | None]:
     op_tags={"dagster/concurrency_key": "duckdb"},
     description="All sprints for DELI (board 74) and NFR (board 212) boards.",
 )
-def raw_jira_sprints(context, jira: JiraResource) -> None:
+def raw_jira_sprints(context, jira: JiraResource) -> MaterializeResult:
     import os
     db_path = os.environ.get("DUCKDB_PATH", "data/scrum.duckdb")
 
@@ -179,6 +180,30 @@ def raw_jira_sprints(context, jira: JiraResource) -> None:
             f"Re-registered {len(desired_ordered)} sprint_dates partition(s) in descending order"
             + (f"; {len(added)} new: {added}" if added else "")
         )
+
+    # Per-board summary metadata: how many sprints each board has and, ordered by
+    # start_date, the most recent one. Sprints without a start_date can't be ranked,
+    # so they count toward the total but never win "last".
+    sprints_per_board: dict[str, int] = {}
+    last_sprint_per_board: dict[str, str] = {}
+    latest_start_per_board: dict[int, str] = {}
+    for r in rows:
+        bid = r["board_id"]
+        label = BOARD_NAMES.get(bid, str(bid))
+        sprints_per_board[label] = sprints_per_board.get(label, 0) + 1
+        sd = r.get("start_date")
+        if sd and sd > latest_start_per_board.get(bid, ""):
+            latest_start_per_board[bid] = sd
+            last_sprint_per_board[label] = r["sprint_name"]
+
+    return MaterializeResult(
+        metadata={
+            "num_sprints": MetadataValue.int(len(rows)),
+            "num_boards": MetadataValue.int(len(sprints_per_board)),
+            "sprints_per_board": MetadataValue.json(sprints_per_board),
+            "last_sprint_per_board": MetadataValue.json(last_sprint_per_board),
+        }
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
