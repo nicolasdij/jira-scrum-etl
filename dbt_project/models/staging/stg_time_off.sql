@@ -1,6 +1,10 @@
 -- stg_time_off
--- Expand date ranges into individual calendar days, then aggregate to
--- produce days_off_per_sprint_per_member (working days only).
+-- Combine time-off from two sources at day grain, de-duplicate, then aggregate
+-- to days_off_per_sprint_per_member (working days only):
+--   1. The manual "Time Off" Google Sheet tab (raw_time_off), stored as ranges.
+--   2. The Workday export seed (stg_time_off_workday), already at day grain.
+-- De-duplicating at (member_name, board, off_date) means a day present in both
+-- sources is counted exactly once.
 
 WITH source AS (
     SELECT
@@ -13,34 +17,41 @@ WITH source AS (
       AND end_date   IS NOT NULL
 ),
 
--- Generate one row per calendar day in each time-off range
-days AS (
+-- Expand the sheet ranges into one row per calendar day, working days only.
+sheet_days AS (
     SELECT
         member_name,
         board,
-        UNNEST(
-            generate_series(start_date::TIMESTAMP, end_date::TIMESTAMP, INTERVAL '1 day')
-        )::DATE AS off_date
-    FROM source
-),
-
--- Keep only working days (Mon–Fri)
-working_days AS (
-    SELECT *
-    FROM days
+        off_date
+    FROM (
+        SELECT
+            member_name,
+            board,
+            UNNEST(
+                generate_series(start_date::TIMESTAMP, end_date::TIMESTAMP, INTERVAL '1 day')
+            )::DATE AS off_date
+        FROM source
+    )
     WHERE DAYOFWEEK(off_date) NOT IN (0, 6)   -- DuckDB: 0=Sunday, 6=Saturday
 ),
 
--- Join to sprints to know which sprint each off-day falls in
+-- Union both day-grain sources and de-duplicate overlapping days.
+all_days AS (
+    SELECT member_name, board, off_date FROM sheet_days
+    UNION   -- UNION (not UNION ALL) drops duplicate (member, board, day) rows
+    SELECT member_name, board, off_date FROM {{ ref('stg_time_off_workday') }}
+),
+
+-- Join to sprints to know which sprint each off-day falls in.
 joined AS (
     SELECT
-        wd.member_name,
-        wd.board,
-        wd.off_date,
+        ad.member_name,
+        ad.board,
+        ad.off_date,
         s.sprint_id
-    FROM working_days wd
+    FROM all_days ad
     JOIN {{ ref('stg_jira_sprints') }} s
-        ON wd.off_date BETWEEN s.start_date::DATE AND s.end_date::DATE
+        ON ad.off_date BETWEEN s.start_date::DATE AND s.end_date::DATE
 ),
 
 aggregated AS (

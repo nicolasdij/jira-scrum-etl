@@ -75,8 +75,8 @@ full_pipeline_job = _duckdb_job(
 # On-demand extraction only (no export) — useful for mid-sprint data refresh
 extraction_only_job = _duckdb_job(
     name="extraction_only_job",
-    selection=AssetSelection.groups("raw_jira", "raw_gsheets") - _partitioned_issues,
-    description="Extract raw data from Jira and Google Sheets into DuckDB without running dbt.",
+    selection=AssetSelection.groups("raw_jira", "raw_gsheets", "raw_workday") - _partitioned_issues,
+    description="Extract raw data from Jira, Google Sheets, and the Workday export into DuckDB without running dbt.",
 )
 
 # Per-sprint partitioned job — one run per sprint partition.
@@ -112,7 +112,7 @@ sprint_plan_update_job = _duckdb_job(
 # Refresh Capacity Plan and Sprint Plan tabs after editing the Time Off,
 # Public Holidays, or Team Splits input sheets — the three inputs that drive
 # member availability and therefore subteam capacity.
-# Runs: raw_time_off / raw_public_holidays / raw_team_splits
+# Runs: raw_time_off / raw_workday_time_off / raw_public_holidays / raw_team_splits
 #       → stg_* → int_member_sprint_availability → int_subteam_sprint_capacity_pct
 #       → mart_capacity_planning → mart_sprint_plan
 #       → gsheets_capacity_plan_export + gsheets_sprint_plan_export
@@ -123,8 +123,10 @@ capacity_inputs_sync_job = _duckdb_job(
     name="capacity_inputs_sync_job",
     selection=AssetSelection.assets(
         AssetKey(["raw", "raw_time_off"]),
+        AssetKey(["raw", "raw_workday_time_off"]),
         AssetKey(["raw", "raw_public_holidays"]),
         AssetKey(["raw", "raw_team_splits"]),
+        AssetKey(["staging", "stg_time_off_workday"]),
         AssetKey(["staging", "stg_time_off"]),
         AssetKey(["staging", "stg_public_holidays"]),
         AssetKey(["staging", "stg_team_splits"]),

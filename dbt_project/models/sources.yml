@@ -17,3 +17,5 @@ sources:
         description: "Per-sprint, per-member board/sub-team allocation, read from the Google Sheets input spreadsheet."
       - name: raw_sprint_planning
         description: "Per-sprint issue planning data, read from the Sprint Items Google Sheets tab."
+      - name: raw_workday_time_off
+        description: "Per-day time-off entries normalized from the Workday export CSV (data/workday-time_off.csv)."

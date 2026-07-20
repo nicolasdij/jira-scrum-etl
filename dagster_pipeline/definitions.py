@@ -14,7 +14,7 @@ import os
 from dagster import Definitions, EnvVar, load_assets_from_modules
 from dagster_dbt import DbtCliResource, dbt_assets
 
-from dagster_pipeline.assets import exports, gsheets, jira
+from dagster_pipeline.assets import exports, gsheets, jira, workday
 from dagster_pipeline.resources.gsheets_resource import GSheetsResource
 from dagster_pipeline.resources.jira_resource import JiraResource
 from dagster_pipeline.schedules import (
@@ -76,7 +76,7 @@ except Exception as exc:
 # Python extraction assets
 # ─────────────────────────────────────────────────────────────────────────────
 
-_python_assets = load_assets_from_modules([jira, gsheets, exports])
+_python_assets = load_assets_from_modules([jira, gsheets, exports, workday])
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Resources

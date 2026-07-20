@@ -35,6 +35,9 @@ seeds:
         board_key: varchar
         board_name: varchar
         default_subteam: varchar
+    workday_member_map:
+      +column_types:
+        employee_id: varchar
 
 models:
   jira_scrum:
