@@ -11,8 +11,10 @@ Jira Scrum ETL is a data pipeline that:
 ## Development Commands
 
 ```bash
-# Run the Dagster dev UI (http://localhost:3000)
-dagster dev
+# Run the Dagster dev UI (http://localhost:3001)
+# Use ./start-etl.sh, which pins the port (override with DAGSTER_PORT=...).
+# Plain `dagster dev` / `dg dev` default to 3000, which is often already taken.
+./start-etl.sh
 
 # Initialize dbt (required on first run or after adding packages)
 cd dbt_project && dbt deps && dbt parse
