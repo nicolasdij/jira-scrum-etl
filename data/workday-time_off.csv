@@ -121,12 +121,28 @@ Time Off Date,Day of the Week,Worker,Employee ID,Time Off/Absence Table,Time Off
 2026-10-05,lunes,Enrique Alvarez de la Torre,101714,ESP Annual Leave Time Off,Annual Leave,1,Days
 2026-10-06,martes,Enrique Alvarez de la Torre,101714,ESP Annual Leave Time Off,Annual Leave,1,Days
 2026-10-07,miércoles,Enrique Alvarez de la Torre,101714,ESP Annual Leave Time Off,Annual Leave,1,Days
-2026-10-19,lunes,Antonio Estarli Villalba,101716,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-10-09,viernes,Mario Briceño,101707,ESP Annual Leave Time Off,Annual Leave,0.5,Days
+2026-10-26,lunes,Enrique Alvarez de la Torre,101714,IRE and ESP Other Leave Time Off,Other Leave,1,Days
+2026-10-27,martes,Enrique Alvarez de la Torre,101714,IRE and ESP Other Leave Time Off,Other Leave,1,Days
+2026-10-28,miércoles,Matias Manglano Gonzalez,101709,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-10-29,jueves,Matias Manglano Gonzalez,101709,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-10-30,viernes,Matias Manglano Gonzalez,101709,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-11-03,martes,Matias Manglano Gonzalez,101709,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-11-03,martes,Antonio Estarli Villalba,101716,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-11-04,miércoles,Matias Manglano Gonzalez,101709,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-11-04,miércoles,Antonio Estarli Villalba,101716,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-11-05,jueves,Matias Manglano Gonzalez,101709,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-11-05,jueves,Antonio Estarli Villalba,101716,ESP Annual Leave Time Off,Annual Leave,1,Days
 2026-11-06,viernes,Antonio Estarli Villalba,101716,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-11-06,viernes,Matias Manglano Gonzalez,101709,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-11-10,martes,Matias Manglano Gonzalez,101709,ESP Annual Leave Time Off,Annual Leave,1,Days
 2026-11-10,martes,Enrique Alvarez de la Torre,101714,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-11-11,miércoles,Matias Manglano Gonzalez,101709,ESP Annual Leave Time Off,Annual Leave,1,Days
 2026-11-11,miércoles,Enrique Alvarez de la Torre,101714,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-11-12,jueves,Matias Manglano Gonzalez,101709,ESP Annual Leave Time Off,Annual Leave,1,Days
 2026-11-12,jueves,Enrique Alvarez de la Torre,101714,ESP Annual Leave Time Off,Annual Leave,1,Days
 2026-11-12,jueves,Mario Briceño,101707,ESP Annual Leave Time Off,Annual Leave,0.5,Days
+2026-11-13,viernes,Matias Manglano Gonzalez,101709,ESP Annual Leave Time Off,Annual Leave,1,Days
 2026-11-13,viernes,Enrique Alvarez de la Torre,101714,ESP Annual Leave Time Off,Annual Leave,1,Days
 2026-11-13,viernes,Mario Briceño,101707,ESP Annual Leave Time Off,Annual Leave,1,Days
 2026-11-16,lunes,Enrique Alvarez de la Torre,101714,ESP Annual Leave Time Off,Annual Leave,1,Days
@@ -134,3 +150,23 @@ Time Off Date,Day of the Week,Worker,Employee ID,Time Off/Absence Table,Time Off
 2026-11-18,miércoles,Enrique Alvarez de la Torre,101714,ESP Annual Leave Time Off,Annual Leave,1,Days
 2026-11-19,jueves,Enrique Alvarez de la Torre,101714,ESP Annual Leave Time Off,Annual Leave,1,Days
 2026-11-20,viernes,Enrique Alvarez de la Torre,101714,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-11-20,viernes,Ever Arce,101713,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-11-27,viernes,Ever Arce,101713,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-12-03,jueves,Ever Arce,101713,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-12-04,viernes,Ever Arce,101713,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-12-09,miércoles,Enrique Puertas,101711,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-12-09,miércoles,Antonio Estarli Villalba,101716,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-12-10,jueves,Enrique Puertas,101711,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-12-10,jueves,Antonio Estarli Villalba,101716,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-12-10,jueves,Ever Arce,101713,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-12-11,viernes,Enrique Puertas,101711,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-12-11,viernes,Antonio Estarli Villalba,101716,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-12-11,viernes,Ever Arce,101713,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-12-21,lunes,Ever Arce,101713,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-12-22,martes,Ever Arce,101713,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-12-23,miércoles,Ever Arce,101713,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-12-24,jueves,Ever Arce,101713,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-12-28,lunes,Ever Arce,101713,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-12-29,martes,Ever Arce,101713,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-12-30,miércoles,Ever Arce,101713,ESP Annual Leave Time Off,Annual Leave,1,Days
+2026-12-31,jueves,Ever Arce,101713,ESP Annual Leave Time Off,Annual Leave,1,Days
