@@ -27,7 +27,9 @@ dependencies = [
     "dagster-dg-cli>=1.13.3",
 ]
 
-[project.optional-dependencies]
+# A dependency group (not an extra) so plain `uv sync` installs it; uv syncs
+# the `dev` group by default but removes extras unless --extra is passed.
+[dependency-groups]
 dev = [
     "pytest>=8.0",
     "pytest-mock>=3.12",
