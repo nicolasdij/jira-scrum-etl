@@ -6,7 +6,8 @@ Authentication: HTTP Basic with email + API token.
 from __future__ import annotations
 
 import time
-from typing import Any, Generator
+from collections.abc import Generator
+from typing import Any
 
 import requests
 from dagster import ConfigurableResource, get_dagster_logger

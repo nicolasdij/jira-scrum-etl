@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from dagster import (
     AssetKey,
@@ -63,20 +63,22 @@ _partitioned_issues = AssetSelection.assets(AssetKey(["raw", "raw_jira_issues"])
 
 # Full pipeline: extract → dbt transform → export.
 # raw_jira_issues is excluded because it is a partitioned asset handled separately.
+# This is also the one on-demand refresh job: after editing Time Off, Public
+# Holidays, Team Splits or Sprint Items, run it to rebuild every output tab.
+# It replaced several narrower jobs (capacity inputs only, sprint plan only, ...)
+# that saved only ~10-20 s per run but made it unclear which one to pick. To also
+# pick up Jira changes (items added/removed, points edited), use
+# scripts/sync_sprint_planning.sh, which re-fetches the active and upcoming
+# raw_jira_issues partitions first and then runs this job.
 full_pipeline_job = _duckdb_job(
     name="full_pipeline_job",
     selection=AssetSelection.all() - _partitioned_issues,
     description=(
-        "Full ETL run: extract from Jira and Google Sheets, run dbt transforms, "
-        "write results back to Google Sheets."
+        "Full ETL run: extract Jira sprints, Google Sheets inputs and the Workday export, "
+        "run dbt transforms, refresh the Team Splits / Sprint Items sheets, and write every "
+        "output tab. Run on demand after editing any input sheet. Does not re-fetch Jira "
+        "issues (use scripts/sync_sprint_planning.sh for that)."
     ),
-)
-
-# On-demand extraction only (no export) — useful for mid-sprint data refresh
-extraction_only_job = _duckdb_job(
-    name="extraction_only_job",
-    selection=AssetSelection.groups("raw_jira", "raw_gsheets", "raw_workday") - _partitioned_issues,
-    description="Extract raw data from Jira, Google Sheets, and the Workday export into DuckDB without running dbt.",
 )
 
 # Per-sprint partitioned job — one run per sprint partition.
@@ -84,67 +86,6 @@ raw_jira_issues_job = _duckdb_job(
     name="raw_jira_issues_job",
     selection=_partitioned_issues,
     description="Materialises a single sprint partition of raw_jira_issues.",
-)
-
-# Pre-populate team splits for upcoming sprints
-team_splits_prepopulate_job = _duckdb_job(
-    name="team_splits_prepopulate_job",
-    selection=AssetSelection.assets("gsheets_team_splits_prepopulator"),
-    description="Insert skeleton rows into the Team Splits sheet for future sprints.",
-)
-
-# Refresh Sprint Plan tab after editing the Sprint Items input sheet.
-# Runs: raw_sprint_planning → stg_sprint_planning → mart_sprint_plan → gsheets_sprint_plan_export
-sprint_plan_update_job = _duckdb_job(
-    name="sprint_plan_update_job",
-    selection=AssetSelection.assets(
-        AssetKey(["raw", "raw_sprint_planning"]),
-        AssetKey(["staging", "stg_sprint_planning"]),
-        AssetKey(["marts", "mart_sprint_plan"]),
-        "gsheets_sprint_plan_export",
-    ),
-    description=(
-        "Re-reads the Sprint Items input sheet and rebuilds the Sprint Plan output tab. "
-        "Run this after editing planned_points or include values in the Sprint Items sheet."
-    ),
-)
-
-# Refresh Capacity Plan and Sprint Plan tabs after editing the Time Off,
-# Public Holidays, or Team Splits input sheets — the three inputs that drive
-# member availability and therefore subteam capacity.
-# Runs: raw_time_off / raw_workday_time_off / raw_public_holidays / raw_team_splits
-#       → stg_* → int_member_sprint_availability → int_subteam_sprint_capacity_pct
-#       → mart_capacity_planning → mart_sprint_plan
-#       → gsheets_capacity_plan_export + gsheets_sprint_plan_export
-# mart_rolling_velocity is unaffected by these inputs, so it isn't rebuilt;
-# stg_sprint_planning is left alone too (its outputs feed mart_sprint_plan but
-# don't depend on the capacity inputs).
-capacity_inputs_sync_job = _duckdb_job(
-    name="capacity_inputs_sync_job",
-    selection=AssetSelection.assets(
-        AssetKey(["raw", "raw_time_off"]),
-        AssetKey(["raw", "raw_workday_time_off"]),
-        AssetKey(["raw", "raw_public_holidays"]),
-        AssetKey(["raw", "raw_team_splits"]),
-        AssetKey(["staging", "stg_time_off_workday"]),
-        AssetKey(["staging", "stg_time_off"]),
-        AssetKey(["staging", "stg_public_holidays"]),
-        AssetKey(["staging", "stg_team_splits"]),
-        AssetKey(["intermediate", "int_member_sprint_availability"]),
-        AssetKey(["intermediate", "int_subteam_sprint_capacity_pct"]),
-        AssetKey(["marts", "mart_capacity_planning"]),
-        AssetKey(["marts", "mart_sprint_plan"]),
-        AssetKey(["marts", "mart_member_availability"]),
-        "gsheets_capacity_plan_export",
-        "gsheets_sprint_plan_export",
-        "gsheets_member_availability_export",
-    ),
-    description=(
-        "Re-reads Time Off / Public Holidays / Team Splits input sheets and rebuilds "
-        "the Capacity Plan, Sprint Plan, and Member Availability output tabs. Run this "
-        "after editing any of those three sheets so subteam capacity (and the Sprint "
-        "Plan headroom column) reflects the new availability."
-    ),
 )
 
 # Monthly cleanup of Dagster run history older than 30 days. Calls
@@ -164,7 +105,7 @@ _CLEANUP_RUN_RETENTION_DAYS = 30
 
 @op(description="Delete Dagster runs older than the retention window.")
 def cleanup_old_runs_op(context) -> None:
-    cutoff = datetime.now(timezone.utc) - timedelta(days=_CLEANUP_RUN_RETENTION_DAYS)
+    cutoff = datetime.now(UTC) - timedelta(days=_CLEANUP_RUN_RETENTION_DAYS)
     instance = context.instance
     filters = RunsFilter(updated_before=cutoff, statuses=list(FINISHED_STATUSES))
 
@@ -182,7 +123,7 @@ def cleanup_old_runs_op(context) -> None:
             try:
                 instance.delete_run(run.run_id)
                 deleted += 1
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — logged; one bad run must not stop the cleanup
                 failed_ids.add(run.run_id)
                 context.log.warning(f"Failed to delete run {run.run_id}: {exc}")
         context.log.info(f"Deleted {deleted} runs so far...")
@@ -202,28 +143,6 @@ def cleanup_old_runs_op(context) -> None:
 def cleanup_old_runs_job():
     cleanup_old_runs_op()
 
-
-# One-click sync after editing a Jira issue (e.g. setting a t-shirt size):
-# re-fetches the chosen sprint's issues from Jira, refreshes blank cells in the
-# Sprint Items sheet, and rebuilds the Sprint Plan output tab.
-# When launched, pick the future sprint's start_date (YYYY-MM-DD) as the partition key.
-sprint_planning_sync_job = _duckdb_job(
-    name="sprint_planning_sync_job",
-    selection=AssetSelection.assets(
-        AssetKey(["raw", "raw_jira_issues"]),
-        "gsheets_sprint_planning_prepopulator",
-        AssetKey(["raw", "raw_sprint_planning"]),
-        AssetKey(["staging", "stg_sprint_planning"]),
-        AssetKey(["marts", "mart_sprint_plan"]),
-        "gsheets_sprint_plan_export",
-    ),
-    description=(
-        "End-to-end sync after a Jira edit: re-fetches raw_jira_issues for the chosen "
-        "sprint-date partition, refreshes blank planned_points/subteam/status cells in "
-        "the Sprint Items sheet, then rebuilds the Sprint Plan output tab. "
-        "Pick the future sprint's start_date (YYYY-MM-DD) as the partition when launching."
-    ),
-)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Schedules
@@ -257,14 +176,17 @@ cleanup_monthly_schedule = ScheduleDefinition(
 )
 
 # Pre-populate team splits the Monday before sprint start (sprints start Tuesday).
+# Runs the full pipeline (which includes gsheets_team_splits_prepopulator) so the
+# output tabs are fresh too. The schedule name is kept so its on/off state survives.
 team_splits_monday_schedule = ScheduleDefinition(
     name="team_splits_monday_prepopulate",
-    job=team_splits_prepopulate_job,
+    job=full_pipeline_job,
     cron_schedule="0 6 * * 1",   # 06:00 UTC every Monday
     default_status=DefaultScheduleStatus.RUNNING,
     description=(
-        "Inserts skeleton rows for future sprints into the Team Splits sheet "
-        "every Monday morning, giving you time to fill in splits before Tuesday's run."
+        "Full pipeline every Monday morning: inserts skeleton rows for future sprints into "
+        "the Team Splits sheet and refreshes all output tabs, giving you time to fill in "
+        "splits before Tuesday's run."
     ),
 )
 
@@ -284,9 +206,10 @@ team_splits_monday_schedule = ScheduleDefinition(
 )
 def raw_jira_issues_partition_sensor(context):
     """Dispatch raw_jira_issues runs for every sprint-date partition that needs updating."""
-    import duckdb
     import os
     from datetime import date
+
+    import duckdb
 
     db_path = os.environ.get("DUCKDB_PATH", "data/scrum.duckdb")
 
@@ -347,7 +270,7 @@ def raw_jira_issues_partition_sensor(context):
         }
 
         con.close()
-    except Exception:
+    except duckdb.Error:
         yield SkipReason("DuckDB not yet initialised; skipping.")
         return
 
@@ -392,8 +315,9 @@ def raw_jira_issues_partition_sensor(context):
 )
 def jira_sprint_closed_sensor(context):
     """Detect newly closed sprints and trigger the pipeline."""
-    import duckdb
     import os
+
+    import duckdb
 
     db_path = os.environ.get("DUCKDB_PATH", "data/scrum.duckdb")
 
@@ -415,7 +339,7 @@ def jira_sprint_closed_sensor(context):
             [last_fired_sprint_id],
         ).fetchone()
         con.close()
-    except Exception:
+    except duckdb.Error:
         yield SkipReason("DuckDB not yet initialised; skipping sensor tick.")
         return
 

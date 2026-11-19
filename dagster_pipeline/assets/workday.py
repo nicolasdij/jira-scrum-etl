@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import csv
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 
 from dagster import asset
 
@@ -100,7 +100,7 @@ def raw_workday_time_off(context) -> None:
             _extracted_at VARCHAR
         )
     """)
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(UTC).replace(tzinfo=None).isoformat()
     con.executemany(
         "INSERT INTO raw.raw_workday_time_off VALUES (?, ?, ?, ?, ?, ?)",
         [[*values, now] for values in records],

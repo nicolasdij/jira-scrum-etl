@@ -13,10 +13,9 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date, datetime, timedelta
-from typing import Any, Optional
-
 import time
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 import duckdb
 from dagster import AssetKey, asset
@@ -41,7 +40,7 @@ _ACTIVE_SPRINT_ROLLOVER_THRESHOLD = 0.70
 # Helper
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _parse_date(s: str | None) -> Optional[date]:
+def _parse_date(s: str | None) -> date | None:
     """Parse a date string from Google Sheets or Jira ISO format into a date object."""
     if not s:
         return None
@@ -63,8 +62,8 @@ def _compute_effective_days(
     sprint_end: str | None,
     regions: list[str],
     holiday_map: dict[str, set[str]],
-    time_off_ranges: list[tuple[Optional[date], Optional[date]]],
-) -> Optional[float]:
+    time_off_ranges: list[tuple[date | None, date | None]],
+) -> float | None:
     """Count weekdays in [sprint_start, sprint_end] minus public holidays and time off."""
     start = _parse_date(sprint_start)
     end = _parse_date(sprint_end)
@@ -129,7 +128,7 @@ def raw_time_off(context, gsheets: GSheetsResource) -> None:
             _extracted_at VARCHAR
         )
     """)
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(UTC).replace(tzinfo=None).isoformat()
     con.executemany(
         "INSERT INTO raw.raw_time_off VALUES (?, ?, ?, ?, ?)",
         [
@@ -168,7 +167,7 @@ def raw_public_holidays(context, gsheets: GSheetsResource) -> None:
             _extracted_at VARCHAR
         )
     """)
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(UTC).replace(tzinfo=None).isoformat()
     con.executemany(
         "INSERT INTO raw.raw_public_holidays VALUES (?, ?, ?, ?)",
         [
@@ -208,7 +207,7 @@ def raw_team_splits(context, gsheets: GSheetsResource) -> None:
             _extracted_at     VARCHAR
         )
     """)
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(UTC).replace(tzinfo=None).isoformat()
     rows = []
     for r in records:
         days = r.get("days_allocated")
@@ -276,8 +275,9 @@ def gsheets_team_splits_prepopulator(
         members = con.execute(
             "SELECT member_name, board, subteam FROM raw.team_members"
         ).fetchall()
-    except Exception:
-        import csv, pathlib
+    except duckdb.Error:
+        import csv
+        import pathlib
         seed_path = pathlib.Path(__file__).parents[2] / "dbt_project" / "seeds" / "team_members.csv"
         with open(seed_path) as f:
             members = [(r["member_name"], r["board"], r["subteam"]) for r in csv.DictReader(f)]
@@ -288,8 +288,9 @@ def gsheets_team_splits_prepopulator(
             row[0]: [r.strip() for r in row[1].split(",")]
             for row in con.execute("SELECT member_name, regions FROM raw.member_regions").fetchall()
         }
-    except Exception:
-        import csv, pathlib
+    except duckdb.Error:
+        import csv
+        import pathlib
         seed_path = pathlib.Path(__file__).parents[2] / "dbt_project" / "seeds" / "member_regions.csv"
         with open(seed_path) as f:
             member_regions_map = {
@@ -303,7 +304,7 @@ def gsheets_team_splits_prepopulator(
             row[0]: row[1]
             for row in con.execute("SELECT board_id, board_key FROM raw.board_config").fetchall()
         }
-    except Exception:
+    except duckdb.Error:
         board_map = {74: "DELI", 212: "NFR"}
 
     # Load public holidays: date_str (YYYY-MM-DD) → set of regions
@@ -319,7 +320,7 @@ def gsheets_team_splits_prepopulator(
                     holiday_map[key_str] = set()
                 for region in [r.strip() for r in (hregions or "").split(",") if r.strip()]:
                     holiday_map[key_str].add(region)
-    except Exception:
+    except duckdb.Error:
         context.log.warning("raw_public_holidays not available; holidays will not be deducted")
 
     # Load time off: member_name → list of (parsed_start, parsed_end)
@@ -331,7 +332,7 @@ def gsheets_team_splits_prepopulator(
             if member_name not in time_off_map:
                 time_off_map[member_name] = []
             time_off_map[member_name].append((_parse_date(to_start), _parse_date(to_end)))
-    except Exception:
+    except duckdb.Error:
         context.log.warning("raw_time_off not available; time off will not be deducted")
 
     con.close()
@@ -467,7 +468,7 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
             row[0]: row[1]
             for row in con.execute("SELECT board_id, board_key FROM raw.board_config").fetchall()
         }
-    except Exception:
+    except duckdb.Error:
         board_map = {74: "DELI", 212: "NFR"}
 
     # label → subteam (first label match wins, consistent with stg_jira_issues)
@@ -476,8 +477,9 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
             row[0]: row[1]
             for row in con.execute("SELECT label, subteam FROM raw.subteam_labels").fetchall()
         }
-    except Exception:
-        import csv, pathlib
+    except duckdb.Error:
+        import csv
+        import pathlib
         seed_path = pathlib.Path(__file__).parents[2] / "dbt_project" / "seeds" / "subteam_labels.csv"
         with open(seed_path) as f:
             subteam_label_map = {r["label"]: r["subteam"] for r in csv.DictReader(f)}
@@ -491,7 +493,7 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
                 "WHERE default_subteam IS NOT NULL AND default_subteam != ''"
             ).fetchall()
         }
-    except Exception:
+    except duckdb.Error:
         default_subteam_map = {"NFR": "Infra"}
 
     # Fetch issues for each target sprint. Tuple shape:
@@ -560,7 +562,7 @@ def gsheets_sprint_planning_prepopulator(context, gsheets: GSheetsResource) -> N
             for label in json.loads(labels_json):
                 if label in subteam_label_map:
                     return subteam_label_map[label]
-        except Exception:
+        except (ValueError, TypeError):
             return None
         return None
 
@@ -735,7 +737,7 @@ def raw_sprint_planning(context, gsheets: GSheetsResource) -> None:
             _extracted_at  VARCHAR
         )
     """)
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(UTC).replace(tzinfo=None).isoformat()
     con.executemany(
         "INSERT INTO raw.raw_sprint_planning VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [

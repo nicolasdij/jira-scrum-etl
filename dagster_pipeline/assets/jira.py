@@ -10,11 +10,12 @@ from __future__ import annotations
 import json
 import re
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import duckdb
 from dagster import AssetKey, DynamicPartitionsDefinition, MaterializeResult, MetadataValue, asset
+
 from dagster_pipeline.resources.jira_resource import JiraResource
 
 sprint_partitions = DynamicPartitionsDefinition(name="sprint_dates")
@@ -124,7 +125,7 @@ def raw_jira_sprints(context, jira: JiraResource) -> MaterializeResult:
                 "start_date": s.get("startDate"),
                 "end_date": s.get("endDate"),
                 "complete_date": s.get("completeDate"),
-                "_extracted_at": datetime.utcnow().isoformat(),
+                "_extracted_at": datetime.now(UTC).replace(tzinfo=None).isoformat(),
             })
 
     context.log.info(f"Total sprints fetched: {len(rows)}")
@@ -370,7 +371,7 @@ def raw_jira_issues(context, jira: JiraResource) -> MaterializeResult | None:
                 "issue_type": issuetype_obj.get("name"),
                 "is_subtask": bool(issuetype_obj.get("subtask")),
                 "parent_key": parent_obj.get("key"),
-                "_extracted_at": datetime.utcnow().isoformat(),
+                "_extracted_at": datetime.now(UTC).replace(tzinfo=None).isoformat(),
             })
 
         context.log.info(

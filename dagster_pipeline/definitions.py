@@ -9,7 +9,7 @@ Or point to this module:
 
 from __future__ import annotations
 
-import os
+import pathlib
 
 from dagster import Definitions, EnvVar, load_assets_from_modules
 from dagster_dbt import DbtCliResource, dbt_assets
@@ -20,20 +20,13 @@ from dagster_pipeline.resources.jira_resource import JiraResource
 from dagster_pipeline.schedules import (
     cleanup_monthly_schedule,
     cleanup_old_runs_job,
+    full_pipeline_job,
     jira_sprint_closed_sensor,
     raw_jira_issues_job,
     raw_jira_issues_partition_sensor,
     team_splits_monday_schedule,
     weekly_tuesday_schedule,
-    full_pipeline_job,
-    extraction_only_job,
-    team_splits_prepopulate_job,
-    sprint_plan_update_job,
-    sprint_planning_sync_job,
-    capacity_inputs_sync_job,
 )
-
-import pathlib
 
 # ─────────────────────────────────────────────────────────────────────────────
 # dbt integration
@@ -63,7 +56,7 @@ try:
         yield from dbt.cli(["build"], context=context).stream()
 
     _dbt_asset_list = [dbt_pipeline_assets]
-except Exception as exc:
+except Exception as exc:  # noqa: BLE001 — surfaced via warnings.warn below
     # Graceful degradation: if the dbt manifest is not yet generated, skip dbt assets.
     # Run `cd dbt_project && dbt deps && dbt parse` to generate it.
     import warnings
@@ -105,12 +98,7 @@ defs = Definitions(
     resources=resources,
     jobs=[
         full_pipeline_job,
-        extraction_only_job,
-        team_splits_prepopulate_job,
         raw_jira_issues_job,
-        sprint_plan_update_job,
-        sprint_planning_sync_job,
-        capacity_inputs_sync_job,
         cleanup_old_runs_job,
     ],
     schedules=[weekly_tuesday_schedule, team_splits_monday_schedule, cleanup_monthly_schedule],
